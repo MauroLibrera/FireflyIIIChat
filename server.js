@@ -9,10 +9,16 @@ app.use(express.json());
 // Servir los archivos estáticos desde la carpeta 'public' (index.html)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Proxy para la API de Groq
+// Proxy para Groq
 app.post('/api/groq', async (req, res) => {
   try {
-    const groqKey = runtimeConfig.groqKey;
+    // Lee la clave enviada desde el localStorage de la PWA, o del .env como fallback
+    const groqKey = (req.headers['x-groq-key'] || process.env.GROQ_API_KEY || '').trim();
+
+    if (!groqKey) {
+      return res.status(401).json({ error: "Falta la API Key de Groq." });
+    }
+
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -30,14 +36,19 @@ app.post('/api/groq', async (req, res) => {
   }
 });
 
-// Proxy para la API de Firefly III
+// Proxy para Firefly III
 app.all(/^\/api\/firefly\/(.*)/, async (req, res) => {
   try {
-    const endpoint = req.params[0]; // Captura la ruta relativa después de /api/firefly/
-    const baseUrl = runtimeConfig.fireflyUrl;
-    const fireflyToken = runtimeConfig.fireflyToken;
+    const endpoint = req.params[0];
+    
+    // Lee la URL y el Token enviados desde la PWA o del .env como fallback
+    const baseUrl = (req.headers['x-firefly-url'] || process.env.FIREFLY_URL || '').replace(/\/$/, '').trim();
+    const fireflyToken = (req.headers['x-firefly-token'] || process.env.FIREFLY_TOKEN || '').trim();
 
-    // Reconstruir los query params (ej: ?type=asset o ?limit=10)
+    if (!baseUrl || !fireflyToken) {
+      return res.status(401).json({ error: "Falta la URL o el Token de Firefly III." });
+    }
+
     const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
     const targetUrl = `${baseUrl}/api/v1/${endpoint}${queryString}`;
 
@@ -66,7 +77,7 @@ app.all(/^\/api\/firefly\/(.*)/, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Firefly Chat Backend escuchando en el puerto ${PORT}`);
+  console.log(`🚀 Firefly Chat Backend en puerto ${PORT}`);
 });
 
 // Memoria dinámica de configuración (inicia con el .env si existe)

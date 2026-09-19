@@ -73,6 +73,16 @@
   const statusText = document.getElementById("status-text");
   const sendBtn = document.getElementById("sendBtn");
 
+  function getAuthHeaders() {
+    const cfg = JSON.parse(localStorage.getItem("firefly_chat_cfg") || "{}");
+    return {
+      "Content-Type": "application/json",
+      "x-firefly-url": cfg.fireflyUrl || "",
+      "x-firefly-token": cfg.fireflyToken || "",
+      "x-groq-key": cfg.groqKey || ""
+    };
+  }
+
   inputMessage.addEventListener("keypress", (e) => {
     if (e.key === "Enter") enviarMensaje();
   });
@@ -82,10 +92,10 @@
         try {
             // Ya no requerimos pasar headers con Bearer Token, server.js los inyecta
             const [resAsset, resRevenue, resTags, resCategories] = await Promise.all([
-                fetch("/api/firefly/accounts?type=asset"),
-                fetch("/api/firefly/accounts?type=revenue"),
-                fetch("/api/firefly/tags"),
-                fetch("/api/firefly/categories")
+                fetch("/api/firefly/accounts?type=asset" , {headers: getAuthHeaders()}),
+                fetch("/api/firefly/accounts?type=revenue", {headers: getAuthHeaders()}),
+                fetch("/api/firefly/tags", {headers: getAuthHeaders()}),
+                fetch("/api/firefly/categories", {headers: getAuthHeaders()})
             ]);
 
             if (!resAsset.ok || !resRevenue.ok || !resTags.ok || !resCategories.ok) {
@@ -217,9 +227,7 @@
 
     const res = await fetch("/api/groq", {
         method: "POST",
-        headers: {
-        "Content-Type": "application/json"
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
         model: "openai/gpt-oss-120b",
         messages: [
@@ -276,9 +284,7 @@
 
     const res = await fetch("/api/firefly/transactions", {
         method: "POST",
-        headers: {
-        "Content-Type": "application/json"
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify(payload)
     });
 
@@ -315,7 +321,7 @@
 
     // A. Consulta de Saldos
     if (data.query_type === "balance") {
-        const res = await fetch("/api/firefly/accounts?type=asset");
+        const res = await fetch("/api/firefly/accounts?type=asset",{headers: getAuthHeaders()});
         if (!res.ok) throw new Error("No se pudieron consultar las cuentas.");
         
         const json = await res.json();
@@ -342,7 +348,7 @@
     // B. Consulta de Presupuestos
     if (data.query_type === "budget") {
         const hoy = new Date().toLocaleDateString("sv-SE");
-        const res = await fetch("/api/firefly/budgets");
+        const res = await fetch("/api/firefly/budgets",{headers: getAuthHeaders()});
         if (!res.ok) throw new Error("No se pudieron consultar los presupuestos.");
 
         const json = await res.json();
@@ -365,7 +371,7 @@
     // Consultamos pidiendo orden por fecha descendente y limitando la fecha final a hoy (end=hoyISO)
     const url = `/api/firefly/transactions?limit=10&page=1&order=date&dir=desc&end=${hoyISO}`;
 
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers: getAuthHeaders() });
     if (!res.ok) throw new Error("No se pudieron consultar las últimas transacciones.");
 
     const json = await res.json();
@@ -401,57 +407,43 @@
     return "❓ No pude interpretar qué consulta querés realizar.";
     }
 
-    // Abrir y Cerrar Modal
-  async function abrirModalConfig() {
-    document.getElementById("modal-config").style.display = "flex";
-    try {
-      const res = await fetch("/api/config");
-      if (res.ok) {
-        const cfg = await res.json();
-        document.getElementById("cfg-firefly-url").value = cfg.fireflyUrl || "";
-        document.getElementById("cfg-firefly-token").value = cfg.hasFireflyToken ? "********" : "";
-        document.getElementById("cfg-groq-key").value = cfg.hasGroqKey ? "********" : "";
-      }
-    } catch (err) {
-      console.error("Error al cargar la configuración existente", err);
-    }
-  }
+// Abrir Modal y cargar valores desde localStorage
+function abrirModalConfig() {
+  document.getElementById("modal-config").style.display = "flex";
+  const cfg = JSON.parse(localStorage.getItem("firefly_chat_cfg") || "{}");
+  
+  document.getElementById("cfg-firefly-url").value = cfg.fireflyUrl || "";
+  document.getElementById("cfg-firefly-token").value = cfg.fireflyToken || "";
+  document.getElementById("cfg-groq-key").value = cfg.groqKey || "";
+}
 
 function cerrarModalConfig() {
   document.getElementById("modal-config").style.display = "none";
 }
 
-// Guardar nueva configuración
-  async function guardarConfiguracion() {
-    const fireflyUrl = document.getElementById("cfg-firefly-url").value.trim();
-    const fireflyToken = document.getElementById("cfg-firefly-token").value.trim();
-    const groqKey = document.getElementById("cfg-groq-key").value.trim();
+// Guardar en localStorage
+function guardarConfiguracion() {
+  const fireflyUrl = document.getElementById("cfg-firefly-url").value.trim();
+  const fireflyToken = document.getElementById("cfg-firefly-token").value.trim();
+  const groqKey = document.getElementById("cfg-groq-key").value.trim();
 
-    const payload = {};
-    if (fireflyUrl) payload.fireflyUrl = fireflyUrl;
-    if (fireflyToken && fireflyToken !== "********") payload.fireflyToken = fireflyToken;
-    if (groqKey && groqKey !== "********") payload.groqKey = groqKey;
+  const cfg = { fireflyUrl, fireflyToken, groqKey };
+  localStorage.setItem("firefly_chat_cfg", JSON.stringify(cfg));
 
-    try {
-      const res = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) throw new Error("No se pudo guardar la configuración.");
-
-      cerrarModalConfig();
-      alert("✅ Configuración guardada correctamente.");
-      
-      // Recargar datos sincronizados
-      if (typeof cargarDatosFirefly === "function") {
-        cargarDatosFirefly();
-      }
-    } catch (err) {
-      alert("❌ Error: " + err.message);
-    }
+  cerrarModalConfig();
+  alert("✅ Configuración guardada en el navegador.");
+  
+  if (typeof cargarDatosFirefly === "function") {
+    cargarDatosFirefly();
   }
+}
+
+// Función opcional para cerrar sesión manualmente
+function borrarConfiguracion() {
+  localStorage.removeItem("firefly_chat_cfg");
+  alert("🗑️ Credenciales borradas del navegador.");
+  location.reload();
+}
 
   // Inicializar al cargar la página
   cargarDatosFirefly();
