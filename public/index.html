@@ -29,6 +29,7 @@
   <div class="chat-header">
     <h1>Firefly AI Assistant</h1>
     <p id="status-text">Cargando datos de Firefly III...</p>
+    <button id="btn-config" onclick="abrirModalConfig()" style="background:none; border:none; color:white; font-size:1.2rem; cursor:pointer;">⚙️</button>
   </div>
   <div class="chat-messages" id="chat">
     <div class="message bot">¡Hola! Sincronicé tus cuentas, categorías y etiquetas. Decime tu gasto o movimiento.</div>
@@ -36,6 +37,26 @@
   <div class="chat-input-area">
     <input type="text" id="inputMessage" placeholder="Ej: Compré 2 cafés a 3000 con Galicia..." autofocus autocomplete="off" />
     <button id="sendBtn" onclick="enviarMensaje()">Enviar</button>
+  </div>
+</div>
+
+<!-- Modal de Configuración -->
+<div id="modal-config" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:1000;">
+  <div style="background:#1e293b; color:#f8fafc; padding:20px; border-radius:12px; width:90%; max-width:400px; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+    <h3 style="margin-top:0;">⚙️ Configuración de APIs</h3>
+    
+    <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">URL de Firefly III:</label>
+    <input type="text" id="cfg-firefly-url" placeholder="http://app:8080" style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
+    
+    <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">Token de Firefly III:</label>
+    <input type="password" id="cfg-firefly-token" placeholder="Bearer Token..." style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
+    
+    <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">API Key de Groq:</label>
+    <input type="password" id="cfg-groq-key" placeholder="gsk_..." style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
+    <div style="display:flex; justify-content: space-between; margin-top:20px; gap:10px;">
+      <button onclick="guardarConfiguracion()" style="flex:1; background:#22c55e; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor:pointer;">Guardar</button>
+      <button onclick="cerrarModalConfig()" style="flex:1; background:#475569; color:white; border:none; padding:10px; border-radius:6px; cursor:pointer;">Cancelar</button>
+    </div>
   </div>
 </div>
 
@@ -379,6 +400,58 @@
 
     return "❓ No pude interpretar qué consulta querés realizar.";
     }
+
+    // Abrir y Cerrar Modal
+  async function abrirModalConfig() {
+    document.getElementById("modal-config").style.display = "flex";
+    try {
+      const res = await fetch("/api/config");
+      if (res.ok) {
+        const cfg = await res.json();
+        document.getElementById("cfg-firefly-url").value = cfg.fireflyUrl || "";
+        document.getElementById("cfg-firefly-token").value = cfg.hasFireflyToken ? "********" : "";
+        document.getElementById("cfg-groq-key").value = cfg.hasGroqKey ? "********" : "";
+      }
+    } catch (err) {
+      console.error("Error al cargar la configuración existente", err);
+    }
+  }
+
+function cerrarModalConfig() {
+  document.getElementById("modal-config").style.display = "none";
+}
+
+// Guardar nueva configuración
+  async function guardarConfiguracion() {
+    const fireflyUrl = document.getElementById("cfg-firefly-url").value.trim();
+    const fireflyToken = document.getElementById("cfg-firefly-token").value.trim();
+    const groqKey = document.getElementById("cfg-groq-key").value.trim();
+
+    const payload = {};
+    if (fireflyUrl) payload.fireflyUrl = fireflyUrl;
+    if (fireflyToken && fireflyToken !== "********") payload.fireflyToken = fireflyToken;
+    if (groqKey && groqKey !== "********") payload.groqKey = groqKey;
+
+    try {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error("No se pudo guardar la configuración.");
+
+      cerrarModalConfig();
+      alert("✅ Configuración guardada correctamente.");
+      
+      // Recargar datos sincronizados
+      if (typeof cargarDatosFirefly === "function") {
+        cargarDatosFirefly();
+      }
+    } catch (err) {
+      alert("❌ Error: " + err.message);
+    }
+  }
 
   // Inicializar al cargar la página
   cargarDatosFirefly();
