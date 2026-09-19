@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firefly AI Assistant (Full Auto)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #0f172a; color: #f8fafc; display: flex; justify-content: center; height: 100vh; }
+    .chat-container { width: 100%; max-width: 480px; display: flex; flex-direction: column; background-color: #1e293b; border-left: 1px solid #334155; border-right: 1px solid #334155; }
+    .chat-header { padding: 16px; background-color: #0f172a; border-bottom: 1px solid #334155; text-align: center; }
+    .chat-header h1 { font-size: 18px; color: #38bdf8; }
+    .chat-header p { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+    .chat-messages { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .message { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
+    .message.user { align-self: flex-end; background-color: #2563eb; color: #ffffff; border-bottom-right-radius: 2px; }
+    .message.bot { align-self: flex-start; background-color: #334155; color: #f8fafc; border-bottom-left-radius: 2px; }
+    .message.error { background-color: #7f1d1d; color: #fecaca; }
+    .chat-input-area { padding: 12px; background-color: #0f172a; border-top: 1px solid #334155; display: flex; gap: 8px; }
+    input[type="text"] { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #334155; background-color: #1e293b; color: #fff; font-size: 14px; outline: none; }
+    input[type="text"]:focus { border-color: #38bdf8; }
+    button { padding: 12px 18px; border-radius: 8px; border: none; background-color: #2563eb; color: white; font-weight: bold; cursor: pointer; }
+    button:disabled { background-color: #475569; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+<div class="chat-container">
+  <div class="chat-header">
+    <h1>Firefly AI Assistant</h1>
+    <p id="status-text">Cargando datos de Firefly III...</p>
+  </div>
+  <div class="chat-messages" id="chat">
+    <div class="message bot">¡Hola! Sincronicé tus cuentas, categorías y etiquetas. Decime tu gasto o movimiento.</div>
+  </div>
+  <div class="chat-input-area">
+    <input type="text" id="inputMessage" placeholder="Ej: Compré 2 cafés a 3000 con Galicia..." autofocus autocomplete="off" />
+    <button id="sendBtn" onclick="enviarMensaje()">Enviar</button>
+  </div>
+</div>
+
+<script>
+
+  let assetAccounts = [];
+  let revenueAccounts = [];
+  let existingTags = [];
+  let existingCategories = [];
+  let defaultAssetAccount = "";
+
+  const chat = document.getElementById("chat");
+  const inputMessage = document.getElementById("inputMessage");
+  const statusText = document.getElementById("status-text");
+  const sendBtn = document.getElementById("sendBtn");
+
+  inputMessage.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") enviarMensaje();
+  });
+
+  // Cargar Cuentas, Tags y Categorías dinámicamente desde Firefly III
+    async function cargarDatosFirefly() {
+        try {
+            // Ya no requerimos pasar headers con Bearer Token, server.js los inyecta
+            const [resAsset, resRevenue, resTags, resCategories] = await Promise.all([
+                fetch("/api/firefly/accounts?type=asset"),
+                fetch("/api/firefly/accounts?type=revenue"),
+                fetch("/api/firefly/tags"),
+                fetch("/api/firefly/categories")
+            ]);
+
+            if (!resAsset.ok || !resRevenue.ok || !resTags.ok || !resCategories.ok) {
+                throw new Error("Error consultando la API de Firefly III.");
+            }
+
+            const dataAsset = await resAsset.json();
+            const dataRevenue = await resRevenue.json();
+            const dataTags = await resTags.json();
+            const dataCategories = await resCategories.json();
+
+            assetAccounts = dataAsset.data.map(a => a.attributes.name);
+            revenueAccounts = dataRevenue.data.map(a => a.attributes.name);
+            existingTags = dataTags.data.map(t => t.attributes.tag);
+            existingCategories = dataCategories.data.map(c => c.attributes.name);
+
+            if (assetAccounts.length > 0) defaultAssetAccount = assetAccounts[0];
+
+            statusText.innerText = `Sincronizado (${assetAccounts.length} cuentas / ${existingCategories.length} cat / ${existingTags.length} tags)`;
+            statusText.style.color = "#4ade80";
+        } catch (err) {
+            statusText.innerText = "❌ Error al sincronizar datos.";
+            statusText.style.color = "#f87171";
+            console.error(err);
+        }
+    }
+
+  function agregarMensaje(texto, tipo = "bot") {
+    const msg = document.createElement("div");
+    msg.className = `message ${tipo}`;
+    msg.innerHTML = texto;
+    chat.appendChild(msg);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+    async function enviarMensaje() {
+        const texto = inputMessage.value.trim();
+        if (!texto) return;
+
+        agregarMensaje(texto, "user");
+        inputMessage.value = "";
+        sendBtn.disabled = true;
+
+        try {
+            const interpretacion = await consultarGroq(texto);
+
+            // Si Groq determina que es una consulta de lectura:
+            if (interpretacion.type === "query") {
+            const respuestaConsulta = await procesarConsultaFirefly(interpretacion);
+            agregarMensaje(respuestaConsulta, "bot");
+            } else {
+            // Si es un gasto, ingreso o transferencia:
+            const resultado = await crearTransaccionFirefly(interpretacion);
+            agregarMensaje(resultado, "bot");
+            }
+        } catch (err) {
+            agregarMensaje(`❌ Error: ${err.message}`, "bot error");
+        } finally {
+            sendBtn.disabled = false;
+        }
+    }
+
+  async function consultarGroq(promptUsuario) {
+    // Obtener fecha actual en formato ISO (YYYY-MM-DD)
+    const hoyStr = new Date().toLocaleDateString("sv-SE"); // "sv-SE" devuelve el formato ISO AAAA-MM-DD
+    const systemPrompt = `Sos un asistente financiero que parsea lenguaje natural a un JSON estricto para la API de Firefly III.
+    La fecha de hoy es: ${hoyStr}
+
+    Cuentas de Activo disponibles:
+    ${JSON.stringify(assetAccounts)}
+
+    Cuentas de Ingreso disponibles:
+    ${JSON.stringify(revenueAccounts)}
+
+    Categorías existentes en Firefly III:
+    ${JSON.stringify(existingCategories)}
+
+    Etiquetas (tags) existentes en Firefly III:
+    ${JSON.stringify(existingTags)}
+
+    Cuenta de activo por defecto: "${defaultAssetAccount}"
+
+    Devolverás ÚNICAMENTE un objeto JSON válido con este formato:
+    {
+        "type": "withdrawal" | "deposit" | "transfer" | "query",
+        "query_type": "balance" | "budget" | "recent_transactions" | null,
+        "amount": number,
+        "description": string,
+        "source_name": string,
+        "destination_name": string,
+        "category_name": string,
+        "installments": number,
+        "tags": string[],
+        "date": "YYYY-MM-DD"
+    }
+    
+    REGLAS PARA CONSULTAS Y CONSULTAS DE SALDO:
+    1. Si el usuario está HACIENDO UNA PREGUNTA o pidiendo información (no registrando un gasto/ingreso), marcá "type": "query".
+    2. "query_type":
+    - "balance": Si pregunta por saldos ("¿Cuánto me queda?", "Saldo de Galicia", "Saldos actuales").
+    - "budget": Si pregunta por presupuestos ("¿Cuánto me queda en comida?", "Estado de presupuestos").
+    - "recent_transactions": Si pide ver sus últimos movimientos ("¿Cuáles fueron mis últimos gastos?").
+    - Si "query_type" es "balance" o "budget" y menciona una cuenta o categoría específica, asignala a "source_name" o "category_name".
+
+    REGLAS DE MAPPING:
+    1. "category_name": Asigná la categoría que mejor describa el gasto.
+    - Priorizá siempre reutilizar una de la lista de "Categorías existentes".
+    - Si ninguna encaja adecuadamente, podés crear un nombre de categoría nuevo corto en formato Title Case (ej: "Restaurantes", "Mascotas", "Tecnología").
+    - Para las transferencias internas ("transfer"), podés devolver un string vacío "".
+    2. "tags": Analizá la intención del gasto y asigná entre 1 y 3 etiquetas relevantes.
+    - Priorizá siempre reutilizar etiquetas del listado de "Etiquetas existentes".
+    - Si ninguna etiqueta existente encaja, podés crear una nueva etiqueta limpia (en minúsculas, palabras simples sin espacios, ej: "cafeteria", "supermercado", "transporte", "salida").
+    - Si el usuario pone un hashtag explícito en el texto (ej: #salidas), incluyo esa etiqueta.
+    3. "withdrawal":
+    - source_name: Nombre exacto de la cuenta de activo. Si no menciona ninguna, usá "${defaultAssetAccount}".
+    - destination_name: El comercio o concepto del gasto.
+    4. "deposit":
+    - source_name: Fuente de ingreso (ej: "Sueldo").
+    - destination_name: Cuenta de activo donde entra el dinero.
+    5. "transfer":
+    - Movimiento entre dos cuentas de activo propias.
+    6. "installments": Cantidad de cuotas (1 por defecto).
+    7. Compras en Cuotas o Tarjeta de Crédito:
+    - Si el gasto menciona "cuotas" (o "installments > 1") o nombra una tarjeta de crédito (ej: "Visa", "Mastercard", "Tarjeta", "Galicia crédito"), seleccioná la cuenta de tarjeta correspondiente de la lista de "Cuentas de Activo".
+    - Si no se especifica el nombre de la tarjeta pero hay cuotas, busca una cuenta de activo que contenga la palabra "Tarjeta" o "Crédito".
+    8. "date":
+    - Si el usuario no menciona ninguna fecha, usá la fecha de hoy ("${hoyStr}").
+    - Si menciona fechas relativas (ej: "ayer", "hace 3 días", "el lunes pasado", "el 15 de este mes"), calculá y devolvé la fecha exacta en formato "YYYY-MM-DD" tomando como referencia que hoy es ${hoyStr}.`;
+
+    const res = await fetch("/api/groq", {
+        method: "POST",
+        headers: {
+        "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+        model: "openai/gpt-oss-120b",
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: promptUsuario }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.1
+        })
+    });
+
+    if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(`Groq API Error: ${errData.error?.message || res.statusText}`);
+    }
+
+    const data = await res.json();
+    return JSON.parse(data.choices[0].message.content);
+  }
+
+  async function crearTransaccionFirefly(data) {
+    const transacciones = [];
+    const numCuotas = data.installments || 1;
+    const montoCuota = (data.amount / numCuotas).toFixed(2);
+    // Parsear la fecha devuelta por Groq o usar la fecha actual como fallback
+    const [year, month, day] = data.date 
+    ? data.date.split("-").map(Number) 
+    : [new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()];
+
+    const fechaBase = new Date(year, month - 1, day);
+
+    for (let i = 0; i < numCuotas; i++) {
+        // Crear objeto fecha para la cuota i
+        const fechaCuota = new Date(year, month - 1 + i, day);
+
+        // Formatear a YYYY-MM-DD sin desfase UTC
+        const fechaISO = fechaCuota.toLocaleDateString("sv-SE");
+
+        transacciones.push({
+            type: data.type,
+            date: fechaISO, // <--- Fecha exacta en UTC-3
+            amount: montoCuota,
+            description: numCuotas > 1 ? `${data.description} (Cuota ${i + 1}/${numCuotas})` : data.description,
+            source_name: data.source_name,
+            destination_name: data.destination_name,
+            tags: data.tags || []
+        });
+    }
+
+    const payload = { transactions: transacciones };
+    if (numCuotas > 1) {
+      payload.group_title = `${data.description} (${numCuotas} cuotas)`;
+    }
+
+    const res = await fetch("/api/firefly/transactions", {
+        method: "POST",
+        headers: {
+        "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || "Error al registrar en Firefly III.");
+    }
+
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(errorData.message || "Error al registrar en Firefly III.");
+    }
+
+    const metaInfo = [];
+    if (data.category_name) metaInfo.push(`📁 Categoría: <b>${data.category_name}</b>`);
+    if (data.tags && data.tags.length > 0) metaInfo.push(`🏷️ Tags: ${data.tags.map(t => `#${t}`).join(", ")}`);
+    
+    const extraHtml = metaInfo.length > 0 ? `<br><small>${metaInfo.join(" | ")}</small>` : "";
+
+    if (data.type === "transfer") {
+      return `✅ Transferencia de <b>$${data.amount}</b> de <i>${data.source_name}</i> a <i>${data.destination_name}</i>.${extraHtml}`;
+    }
+
+    return numCuotas > 1
+      ? `✅ Registradas <b>${numCuotas} cuotas</b> de $${montoCuota} en <i>${data.source_name}</i> para "${data.description}".${extraHtml}`
+      : `✅ Registrado gasto de <b>$${data.amount}</b> en <i>${data.source_name}</i> para "${data.description}".${extraHtml}`;
+  }
+
+  async function procesarConsultaFirefly(data) {
+    const headers = {
+        "Authorization": `Bearer ${FIREFLY_TOKEN}`,
+        "Accept": "application/json"
+    };
+
+    // A. Consulta de Saldos
+    if (data.query_type === "balance") {
+        const res = await fetch("/api/firefly/accounts?type=asset");
+        if (!res.ok) throw new Error("No se pudieron consultar las cuentas.");
+        
+        const json = await res.json();
+        let cuentas = json.data.map(a => ({
+        nombre: a.attributes.name,
+        saldo: parseFloat(a.attributes.current_balance),
+        moneda: a.attributes.currency_symbol || "$"
+        }));
+
+        // Si filtró por una cuenta en particular
+        if (data.source_name) {
+        cuentas = cuentas.filter(c => c.nombre.toLowerCase().includes(data.source_name.toLowerCase()));
+        }
+
+        if (cuentas.length === 0) return "📉 No encontré información para esa cuenta.";
+
+        let html = "<b>💳 Saldos actuales:</b><br>";
+        cuentas.forEach(c => {
+        html += `• <b>${c.nombre}:</b> ${c.moneda}${c.saldo.toLocaleString("es-AR", { minimumFractionDigits: 2 })}<br>`;
+        });
+        return html;
+    }
+
+    // B. Consulta de Presupuestos
+    if (data.query_type === "budget") {
+        const hoy = new Date().toLocaleDateString("sv-SE");
+        const res = await fetch("/api/firefly/budgets");
+        if (!res.ok) throw new Error("No se pudieron consultar los presupuestos.");
+
+        const json = await res.json();
+        if (json.data.length === 0) return "📊 No tenés presupuestos activos configurados.";
+
+        let html = "<b>📊 Estado de Presupuestos:</b><br>";
+        json.data.forEach(b => {
+        const attr = b.attributes;
+        // Extraer datos asignados y gastados del objeto
+        const gastado = attr.spent ? Math.abs(parseFloat(attr.spent[0]?.sum || 0)) : 0;
+        html += `• <b>${attr.name}:</b> Gastado $${gastado.toLocaleString("es-AR")}<br>`;
+        });
+        return html;
+    }
+
+   // C. Últimas Transacciones (Filtrando directamente por API)
+    if (data.query_type === "recent_transactions") {
+    const hoyISO = new Date().toLocaleDateString("sv-SE");
+
+    // Consultamos pidiendo orden por fecha descendente y limitando la fecha final a hoy (end=hoyISO)
+    const url = `/api/firefly/transactions?limit=10&page=1&order=date&dir=desc&end=${hoyISO}`;
+
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error("No se pudieron consultar las últimas transacciones.");
+
+    const json = await res.json();
+    if (!json.data || json.data.length === 0) return "📑 No hay transacciones registradas hasta la fecha.";
+
+    // Extraer las transacciones internas
+    const ultimasTransacciones = [];
+    json.data.forEach(group => {
+        if (group.attributes && group.attributes.transactions) {
+        group.attributes.transactions.forEach(tx => {
+            ultimasTransacciones.push(tx);
+        });
+        }
+    });
+
+    // Tomamos las primeras 5
+    const seleccionadas = ultimasTransacciones.slice(0, 5);
+
+    if (seleccionadas.length === 0) return "📑 No hay transacciones pasadas registradas.";
+
+    let html = "<b>📜 Últimos movimientos reales:</b><br>";
+    seleccionadas.forEach(tx => {
+        const signo = tx.type === "withdrawal" ? "-" : "+";
+        const monto = parseFloat(tx.amount).toLocaleString("es-AR", { minimumFractionDigits: 2 });
+        const fecha = tx.date ? tx.date.split("T")[0] : "";
+        
+        html += `• <i>${fecha}</i> | <b>${tx.description}</b>: ${signo}$${monto} (${tx.source_name})<br>`;
+    });
+    
+    return html;
+    }
+
+    return "❓ No pude interpretar qué consulta querés realizar.";
+    }
+
+  // Inicializar al cargar la página
+  cargarDatosFirefly();
+</script>
+
+</body>
+</html>

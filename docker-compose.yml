@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  firefly-chat:
+    build: .
+    container_name: firefly-chat
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    networks:
+      - firefly_network
+
+networks:
+  firefly_network:
+    external: true
+    name: firefly_firefly_iii

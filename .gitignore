@@ -1,0 +1,15 @@
+# Archivos de configuración y credenciales sensibles
+.env
+.env.local
+*.env
+
+# Dependencias de Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos del sistema y editores
+.DS_Store
+.vscode/
+.idea/
