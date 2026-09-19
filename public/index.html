@@ -40,23 +40,44 @@
   </div>
 </div>
 
-<!-- Modal de Configuración -->
+<!-- Modal de Configuración de Múltiples Sesiones -->
 <div id="modal-config" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:1000;">
   <div style="background:#1e293b; color:#f8fafc; padding:20px; border-radius:12px; width:90%; max-width:400px; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
-    <h3 style="margin-top:0;">⚙️ Configuración de APIs</h3>
+    <h3 style="margin-top:0;">⚙️ Configuración de Sesiones</h3>
     
+    <!-- Selector de Perfil -->
+    <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">Perfil Seleccionado:</label>
+    <div style="display:flex; gap:8px; margin-top:4px;">
+      <select id="cfg-profile-select" onchange="cambiarPerfilFormulario()" style="flex:1; padding:8px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white;">
+      </select>
+      <button onclick="crearNuevoPerfil()" style="background:#3b82f6; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer;">+ Nuevo</button>
+    </div>
+
+    <!-- Nombre del Perfil -->
+    <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">Nombre del Perfil:</label>
+    <input type="text" id="cfg-profile-name" placeholder="Ej: Personal, Trabajo..." style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
+
+    <!-- URL de Firefly III -->
     <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">URL de Firefly III:</label>
     <input type="text" id="cfg-firefly-url" placeholder="http://app:8080" style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
     
+    <!-- Token de Firefly III -->
     <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">Token de Firefly III:</label>
     <input type="password" id="cfg-firefly-token" placeholder="Bearer Token..." style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
     
+    <!-- API Key de Groq -->
     <label style="display:block; margin-top:10px; font-size:0.85rem; color:#94a3b8;">API Key de Groq:</label>
     <input type="password" id="cfg-groq-key" placeholder="gsk_..." style="width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; box-sizing:border-box;">
-    <div style="display:flex; justify-content: space-between; margin-top:20px; gap:10px;">
-      <button onclick="guardarConfiguracion()" style="flex:1; background:#22c55e; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor:pointer;">Guardar</button>
+    
+    <!-- Botones de Acción -->
+    <div style="display:flex; justify-content:space-between; margin-top:20px; gap:10px;">
+      <button onclick="guardarConfiguracion()" style="flex:1; background:#22c55e; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor:pointer;">Guardar y Usar</button>
       <button onclick="cerrarModalConfig()" style="flex:1; background:#475569; color:white; border:none; padding:10px; border-radius:6px; cursor:pointer;">Cancelar</button>
     </div>
+
+    <button onclick="eliminarPerfilActual()" style="width:100%; margin-top:12px; background:#ef4444; color:white; border:none; padding:8px; border-radius:6px; font-size:0.85rem; cursor:pointer;">
+      🗑️ Eliminar este perfil
+    </button>
   </div>
 </div>
 
@@ -73,13 +94,36 @@
   const statusText = document.getElementById("status-text");
   const sendBtn = document.getElementById("sendBtn");
 
+  // Cargar perfiles almacenados o devolver estructura inicial
+  function getProfilesState() {
+    const data = localStorage.getItem("firefly_profiles_cfg");
+    if (!data) {
+      return {
+        activeProfileId: "default",
+        profiles: {
+          "default": { name: "Personal", fireflyUrl: "", fireflyToken: "", groqKey: "" }
+        }
+      };
+    }
+    return JSON.parse(data);
+  }
+
+  // Guardar estado completo de perfiles
+  function saveProfilesState(state) {
+    localStorage.setItem("firefly_profiles_cfg", JSON.stringify(state));
+  }
+
+
+
+    // Obtener el perfil activo actual para hacer peticiones fetch
   function getAuthHeaders() {
-    const cfg = JSON.parse(localStorage.getItem("firefly_chat_cfg") || "{}");
+    const state = getProfilesState();
+    const active = state.profiles[state.activeProfileId] || {};
     return {
       "Content-Type": "application/json",
-      "x-firefly-url": cfg.fireflyUrl || "",
-      "x-firefly-token": cfg.fireflyToken || "",
-      "x-groq-key": cfg.groqKey || ""
+      "x-firefly-url": active.fireflyUrl || "",
+      "x-firefly-token": active.fireflyToken || "",
+      "x-groq-key": active.groqKey || ""
     };
   }
 
@@ -407,44 +451,103 @@
     return "❓ No pude interpretar qué consulta querés realizar.";
     }
 
-// Abrir Modal y cargar valores desde localStorage
-function abrirModalConfig() {
-  document.getElementById("modal-config").style.display = "flex";
-  const cfg = JSON.parse(localStorage.getItem("firefly_chat_cfg") || "{}");
-  
-  document.getElementById("cfg-firefly-url").value = cfg.fireflyUrl || "";
-  document.getElementById("cfg-firefly-token").value = cfg.fireflyToken || "";
-  document.getElementById("cfg-groq-key").value = cfg.groqKey || "";
-}
-
-function cerrarModalConfig() {
-  document.getElementById("modal-config").style.display = "none";
-}
-
-// Guardar en localStorage
-function guardarConfiguracion() {
-  const fireflyUrl = document.getElementById("cfg-firefly-url").value.trim();
-  const fireflyToken = document.getElementById("cfg-firefly-token").value.trim();
-  const groqKey = document.getElementById("cfg-groq-key").value.trim();
-
-  const cfg = { fireflyUrl, fireflyToken, groqKey };
-  localStorage.setItem("firefly_chat_cfg", JSON.stringify(cfg));
-
-  cerrarModalConfig();
-  alert("✅ Configuración guardada en el navegador.");
-  
-  if (typeof cargarDatosFirefly === "function") {
-    cargarDatosFirefly();
+  function abrirModalConfig() {
+    document.getElementById("modal-config").style.display = "flex";
+    renderProfileSelector();
   }
-}
 
-// Función opcional para cerrar sesión manualmente
-function borrarConfiguracion() {
-  localStorage.removeItem("firefly_chat_cfg");
-  alert("🗑️ Credenciales borradas del navegador.");
-  location.reload();
-}
+  function renderProfileSelector() {
+    const state = getProfilesState();
+    const select = document.getElementById("cfg-profile-select");
+    select.innerHTML = "";
 
+    Object.keys(state.profiles).forEach(id => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = state.profiles[id].name || id;
+      if (id === state.activeProfileId) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    cambiarPerfilFormulario();
+  }
+
+  // Cargar en el formulario los inputs del perfil seleccionado en el dropdown
+  function cambiarPerfilFormulario() {
+    const state = getProfilesState();
+    const selectedId = document.getElementById("cfg-profile-select").value;
+    const p = state.profiles[selectedId] || {};
+
+    document.getElementById("cfg-profile-name").value = p.name || "";
+    document.getElementById("cfg-firefly-url").value = p.fireflyUrl || "";
+    document.getElementById("cfg-firefly-token").value = p.fireflyToken || "";
+    document.getElementById("cfg-groq-key").value = p.groqKey || "";
+  }
+
+  // Guardar o Actualizar Perfil
+  function guardarConfiguracion() {
+    const state = getProfilesState();
+    const selectedId = document.getElementById("cfg-profile-select").value || "profile_" + Date.now();
+
+    const name = document.getElementById("cfg-profile-name").value.trim() || "Sin nombre";
+    const fireflyUrl = document.getElementById("cfg-firefly-url").value.trim();
+    const fireflyToken = document.getElementById("cfg-firefly-token").value.trim();
+    const groqKey = document.getElementById("cfg-groq-key").value.trim();
+
+    // Actualizar datos del perfil
+    state.profiles[selectedId] = { name, fireflyUrl, fireflyToken, groqKey };
+    state.activeProfileId = selectedId; // Marcarlo como activo
+
+    saveProfilesState(state);
+
+    cerrarModalConfig();
+    alert(`✅ Perfil "${name}" activado y guardado.`);
+
+    // Recargar cuentas/datos con el nuevo token seleccionado
+    if (typeof cargarDatosFirefly === "function") {
+      cargarDatosFirefly();
+    }
+  }
+
+  // Crear nuevo borrador de perfil
+  function crearNuevoPerfil() {
+    const newId = "profile_" + Date.now();
+    const select = document.getElementById("cfg-profile-select");
+    
+    const opt = document.createElement("option");
+    opt.value = newId;
+    opt.textContent = "Nuevo Perfil";
+    opt.selected = true;
+    select.appendChild(opt);
+
+    document.getElementById("cfg-profile-name").value = "Nuevo Perfil";
+    document.getElementById("cfg-firefly-url").value = "";
+    document.getElementById("cfg-firefly-token").value = "";
+    document.getElementById("cfg-groq-key").value = "";
+  }
+
+  // Eliminar el perfil actualmente seleccionado
+  function eliminarPerfilActual() {
+    const state = getProfilesState();
+    const selectedId = document.getElementById("cfg-profile-select").value;
+
+    if (Object.keys(state.profiles).length <= 1) {
+      alert("❌ Debe existir al menos un perfil.");
+      return;
+    }
+
+    if (confirm(`¿Seguro que querés eliminar el perfil "${state.profiles[selectedId].name}"?`)) {
+      delete state.profiles[selectedId];
+      state.activeProfileId = Object.keys(state.profiles)[0]; // Asignar el primero restante como activo
+      saveProfilesState(state);
+      renderProfileSelector();
+      alert("🗑️ Perfil eliminado.");
+    }
+  }
+
+  function cerrarModalConfig() {
+    document.getElementById("modal-config").style.display = "none";
+  }
   // Inicializar al cargar la página
   cargarDatosFirefly();
 </script>
