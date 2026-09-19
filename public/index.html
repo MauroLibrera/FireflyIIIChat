@@ -88,6 +88,7 @@
   let existingTags = [];
   let existingCategories = [];
   let defaultAssetAccount = "";
+  let transaccionPendiente = null;
 
   const chat = document.getElementById("chat");
   const inputMessage = document.getElementById("inputMessage");
@@ -175,32 +176,66 @@
     chat.scrollTop = chat.scrollHeight;
   }
 
-    async function enviarMensaje() {
-        const texto = inputMessage.value.trim();
-        if (!texto) return;
+    // 1. Enviar mensaje delegando a procesarMensajeUsuario
+  async function enviarMensaje() {
+    const texto = inputMessage.value.trim();
+    if (!texto) return;
 
-        agregarMensaje(texto, "user");
-        inputMessage.value = "";
-        sendBtn.disabled = true;
+    agregarMensaje(texto, "user");
+    inputMessage.value = "";
+    sendBtn.disabled = true;
 
-        try {
-            const interpretacion = await consultarGroq(texto);
-
-            // Si Groq determina que es una consulta de lectura:
-            if (interpretacion.type === "query") {
-            const respuestaConsulta = await procesarConsultaFirefly(interpretacion);
-            agregarMensaje(respuestaConsulta, "bot");
-            } else {
-            // Si es un gasto, ingreso o transferencia:
-            const resultado = await crearTransaccionFirefly(interpretacion);
-            agregarMensaje(resultado, "bot");
-            }
-        } catch (err) {
-            agregarMensaje(`❌ Error: ${err.message}`, "bot error");
-        } finally {
-            sendBtn.disabled = false;
-        }
+    try {
+      await procesarMensajeUsuario(texto);
+    } catch (err) {
+      agregarMensaje(`❌ Error: ${err.message}`, "bot error");
+    } finally {
+      sendBtn.disabled = false;
     }
+  }
+  // Funciones auxiliares para detectar confirmación o cancelación del usuario
+  function esRespuestaAfirmativa(texto) {
+    const afirmativas = ["si", "sí", "correcto", "dale", "ok", "confirmar", "s", "confirmo", "ya", "claro", "de una"];
+    return afirmativas.includes(texto.trim().toLowerCase());
+  }
+
+  function esRespuestaNegativa(texto) {
+    const negativas = ["no", "cancelar", "incorrecto", "n", "pará", "espera", "cancela"];
+    return negativas.includes(texto.trim().toLowerCase());
+  }
+  // 2. Flujo principal con estado de confirmación
+  async function procesarMensajeUsuario(mensajeTexto) {
+    // A. Respuesta afirmativa a una confirmación previa
+    if (transaccionPendiente && esRespuestaAfirmativa(mensajeTexto)) {
+      agregarMensaje("⏳ Registrando transacción en Firefly III...", "bot");
+      const resultado = await crearTransaccionFirefly(transaccionPendiente);
+      agregarMensaje(resultado, "bot");
+      transaccionPendiente = null;
+      return;
+    }
+
+    // B. Respuesta negativa / cancelación
+    if (transaccionPendiente && esRespuestaNegativa(mensajeTexto)) {
+      transaccionPendiente = null;
+      agregarMensaje("🚫 Operación cancelada. Podés indicarme la corrección.", "bot");
+      return;
+    }
+
+    // C. Consulta a Groq
+    const interpretacion = await consultarGroq(mensajeTexto);
+
+    // D. Evaluar confirmación o ejecución según la respuesta del modelo
+    if (interpretacion.requiere_confirmacion) {
+      transaccionPendiente = interpretacion; // Guarda los datos planos devueltos por Groq
+      agregarMensaje(interpretacion.mensaje_confirmacion, "bot");
+    } else if (interpretacion.type === "query") {
+      const respuestaConsulta = await procesarConsultaFirefly(interpretacion);
+      agregarMensaje(respuestaConsulta, "bot");
+    } else {
+      const resultado = await crearTransaccionFirefly(interpretacion);
+      agregarMensaje(resultado, "bot");
+    }
+  }
 
   async function consultarGroq(promptUsuario) {
     // Obtener fecha actual en formato ISO (YYYY-MM-DD)
@@ -225,6 +260,8 @@
     Devolverás ÚNICAMENTE un objeto JSON válido con este formato:
     {
         "type": "withdrawal" | "deposit" | "transfer" | "query",
+        "requiere_confirmacion": boolean,
+        "mensaje_confirmacion": string,
         "query_type": "balance" | "budget" | "recent_transactions" | null,
         "amount": number,
         "description": string,
@@ -236,6 +273,14 @@
         "date": "YYYY-MM-DD"
     }
     
+    REGLAS OBLIGATORIAS DE CONFIRMACIÓN (LEER CON ATENCIÓN):
+    1. SIEMPRE debes establecer "requiere_confirmacion": true para CUALQUIER registro de transacción (gasto, ingreso o transferencia), A MENOS que el usuario explícitamente diga palabras como "registra directamente", "sin confirmar" o "confirmado".
+    2. Cuando "requiere_confirmacion" sea true:
+       - Genera todos los campos de la transacción normalmente ("amount", "description", "source_name", etc.).
+       - Escribe un "mensaje_confirmacion" claro en lenguaje natural pidiendo validación. Ejemplo:
+         "¿Confirmás el gasto de $15.000 en 'Supermercado' usando la cuenta 'Galicia' bajo la categoría 'Comida'?"
+    3. Para consultas de saldo/movimientos ("type": "query"), SIEMPRE establece "requiere_confirmacion": false y "mensaje_confirmacion": "".
+
     REGLAS PARA CONSULTAS Y CONSULTAS DE SALDO:
     1. Si el usuario está HACIENDO UNA PREGUNTA o pidiendo información (no registrando un gasto/ingreso), marcá "type": "query".
     2. "query_type":
@@ -267,7 +312,24 @@
     - Si no se especifica el nombre de la tarjeta pero hay cuotas, busca una cuenta de activo que contenga la palabra "Tarjeta" o "Crédito".
     8. "date":
     - Si el usuario no menciona ninguna fecha, usá la fecha de hoy ("${hoyStr}").
-    - Si menciona fechas relativas (ej: "ayer", "hace 3 días", "el lunes pasado", "el 15 de este mes"), calculá y devolvé la fecha exacta en formato "YYYY-MM-DD" tomando como referencia que hoy es ${hoyStr}.`;
+    - Si menciona fechas relativas (ej: "ayer", "hace 3 días", "el lunes pasado", "el 15 de este mes"), calculá y devolvé la fecha exacta en formato "YYYY-MM-DD" tomando como referencia que hoy es ${hoyStr}.
+    
+    REGLAS DE CONFIRMACIÓN:
+    1. Si falta información clave (como la cuenta de origen o el monto exacto) o si la solicitud es ambigua, establece "requiere_confirmacion": true.
+    2. Si "requiere_confirmacion" es true, proporciona un "mensaje_confirmacion" claro en lenguaje natural pidiendo la validación del usuario y NO ejecutes la acción inmediatamente.
+    3. Si el usuario responde afirmativamente (ej: "sí", "correcto", "dale", "ok"), procede con`;
+
+    // Recopilar los últimos mensajes del chat para darle contexto a Groq
+    const mensajesChat = Array.from(chat.querySelectorAll(".message")).slice(-4).map(msg => ({
+      role: msg.classList.contains("user") ? "user" : "assistant",
+      content: msg.textContent
+    }));
+
+    const messagesPayload = [
+      { role: "system", content: systemPrompt },
+      ...mensajesChat,
+      { role: "user", content: promptUsuario }
+    ];
 
     const res = await fetch("/api/groq", {
         method: "POST",
