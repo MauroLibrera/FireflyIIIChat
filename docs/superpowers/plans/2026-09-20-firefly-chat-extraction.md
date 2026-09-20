@@ -19,6 +19,7 @@
 - **Comments and identifiers in Spanish where the file already uses Spanish**, matching the existing codebase. Test names in English.
 - **Dockerfile and docker-compose.yml are not modified.** `node server.js` remains the entry point.
 - **Line endings:** existing files are CRLF. Keep them.
+- **Test commands never take a directory argument.** On Node 24 a positional directory makes the runner try to load the directory itself and the run fails (`pass 0, fail 1`). Use explicit file paths for a focused run, and bare `node --test` (which discovers recursively from the cwd, skipping `node_modules`) for the whole suite. Verified on Node v24.18.1: `node --test test/` fails, `node --test` passes.
 
 ---
 
@@ -117,7 +118,7 @@ Edit `package.json` to add `"type": "module"` and a test script. The full file:
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -644,7 +645,7 @@ test('installmentDates crosses the year boundary', () => {
 
 - [ ] **Step 2: Run the tests and verify they fail**
 
-Run: `node --test test/domain/`
+Run: `node --test test/domain/format.test.js test/domain/installments.test.js`
 Expected: FAIL — modules not found.
 
 - [ ] **Step 3: Create `public/js/domain/format.js`**
@@ -710,7 +711,7 @@ export function installmentDates(fechaInicialIso, cantidad) {
 
 - [ ] **Step 5: Run the tests and verify they pass**
 
-Run: `node --test test/domain/`
+Run: `node --test test/domain/format.test.js test/domain/installments.test.js`
 Expected: PASS, 13 tests.
 
 - [ ] **Step 6: Commit**
