@@ -98,6 +98,13 @@ app.all(/^\/api\/firefly\/(.*)/, async (req, res) => {
   try {
     const endpoint = req.params[0];
 
+    // El endpoint lo elige el cliente y no puede salirse del prefijo /api/v1/.
+    // fetch normaliza los segmentos ".." antes de enviar, y %2e cuenta como punto.
+    const segmentos = endpoint.split('/').map(seg => seg.toLowerCase().split('%2e').join('.'));
+    if (segmentos.some(seg => seg === '..' || seg === '.')) {
+      return res.status(400).json({ error: 'Endpoint de Firefly III inválido.' });
+    }
+
     // Lee la URL y el Token enviados desde la PWA o del .env como fallback
     const rawUrl = (req.headers['x-firefly-url'] || process.env.FIREFLY_URL || '').trim();
     const fireflyToken = (req.headers['x-firefly-token'] || process.env.FIREFLY_TOKEN || '').trim();

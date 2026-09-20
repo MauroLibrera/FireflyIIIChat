@@ -196,9 +196,20 @@
       statusText.innerText = `Sincronizado (${assetAccounts.length} cuentas / ${existingCategories.length} cat / ${existingTags.length} tags)`;
       statusText.style.color = "#4ade80";
     } catch (err) {
+      console.error(err);
+
+      // Sin URL ni token el fallo es esperable: guiar en vez de mostrar un error
+      const activo = getProfilesState().profiles[getProfilesState().activeProfileId] || {};
+      if (!activo.fireflyUrl || !activo.fireflyToken) {
+        statusText.innerText = "Configurá tu Firefly III para empezar";
+        statusText.style.color = "#facc15";
+        agregarMensaje("Todavía no hay un perfil configurado. Abrí ⚙️ y cargá la URL y el token de Firefly III.", "bot");
+        abrirModalConfig();
+        return;
+      }
+
       statusText.innerText = "❌ Error al sincronizar datos.";
       statusText.style.color = "#f87171";
-      console.error(err);
     }
   }
 
@@ -395,7 +406,12 @@
   async function crearTransaccionFirefly(data) {
     const transacciones = [];
     const numCuotas = data.installments || 1;
-    const montoCuota = (data.amount / numCuotas).toFixed(2);
+
+    // Repartir en centavos: dividir y redondear cada cuota perdia plata
+    // (10000 en 3 cuotas facturaba 9999.99). El sobrante va a las primeras.
+    const totalCentavos = Math.round(Number(data.amount) * 100);
+    const centavosBase = Math.floor(totalCentavos / numCuotas);
+    const centavosSobrantes = totalCentavos - centavosBase * numCuotas;
     // Parsear la fecha devuelta por Groq o usar la fecha actual como fallback
     const [year, month, day] = data.date 
     ? data.date.split("-").map(Number) 
@@ -409,6 +425,9 @@
 
         // Formatear a YYYY-MM-DD sin desfase UTC
         const fechaISO = fechaCuota.toLocaleDateString("sv-SE");
+
+        const centavosCuota = centavosBase + (i < centavosSobrantes ? 1 : 0);
+        const montoCuota = (centavosCuota / 100).toFixed(2);
 
         transacciones.push({
             type: data.type,
@@ -449,7 +468,7 @@
     }
 
     return numCuotas > 1
-      ? `✅ Registradas <b>${numCuotas} cuotas</b> de $${montoCuota} en <i>${escaparHtml(data.source_name)}</i> para "${escaparHtml(data.description)}".${extraHtml}`
+      ? `✅ Registradas <b>${numCuotas} cuotas</b> de ${transacciones[0].amount} en <i>${escaparHtml(data.source_name)}</i> para "${escaparHtml(data.description)}".${extraHtml}`
       : `✅ Registrado gasto de <b>$${escaparHtml(data.amount)}</b> en <i>${escaparHtml(data.source_name)}</i> para "${escaparHtml(data.description)}".${extraHtml}`;
   }
 
