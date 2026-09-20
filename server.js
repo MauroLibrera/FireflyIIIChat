@@ -79,30 +79,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Firefly Chat Backend en puerto ${PORT}`);
 });
-
-// Memoria dinámica de configuración (inicia con el .env si existe)
-let runtimeConfig = {
-  fireflyUrl: (process.env.FIREFLY_URL || '').replace(/\/$/, '').trim(),
-  fireflyToken: (process.env.FIREFLY_TOKEN || '').trim(),
-  groqKey: (process.env.GROQ_API_KEY || '').trim()
-};
-
-// Obtener estado de la configuración (no devuelve las claves completas por seguridad)
-app.get('/api/config', (req, res) => {
-  res.json({
-    fireflyUrl: runtimeConfig.fireflyUrl,
-    hasFireflyToken: Boolean(runtimeConfig.fireflyToken),
-    hasGroqKey: Boolean(runtimeConfig.groqKey)
-  });
-});
-
-// Guardar/Actualizar credenciales desde la PWA
-app.post('/api/config', (req, res) => {
-  const { fireflyUrl, fireflyToken, groqKey } = req.body;
-
-  if (fireflyUrl !== undefined) runtimeConfig.fireflyUrl = fireflyUrl.replace(/\/$/, '').trim();
-  if (fireflyToken !== undefined) runtimeConfig.fireflyToken = fireflyToken.trim();
-  if (groqKey !== undefined) runtimeConfig.groqKey = groqKey.trim();
-
-  res.json({ status: "ok", message: "Configuración actualizada correctamente" });
-});
