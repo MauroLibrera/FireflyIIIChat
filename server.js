@@ -1,4 +1,5 @@
-require('dotenv').config();
+// Se carga .env.local primero y .env como respaldo (la primera ocurrencia gana)
+require('dotenv').config({ path: ['.env.local', '.env'] });
 
 const express = require('express');
 const path = require('path');
@@ -8,6 +9,63 @@ app.use(express.json());
 
 // Servir los archivos estáticos desde la carpeta 'public' (index.html)
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Hosts permitidos para el proxy de Firefly III, separados por coma.
+// Con la lista vacía se acepta cualquier host: el proxy queda expuesto a SSRF,
+// porque la URL de destino la elige el cliente. Definir FIREFLY_ALLOWED_HOSTS
+// en cuanto el servicio sea alcanzable por alguien más que vos.
+const ALLOWED_FIREFLY_HOSTS = (process.env.FIREFLY_ALLOWED_HOSTS || '')
+  .split(',')
+  .map(h => h.trim().toLowerCase())
+  .filter(Boolean);
+
+// Valida la URL provista por el cliente y devuelve la base ya normalizada
+function resolveFireflyBase(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { error: 'La URL de Firefly III no es válida.' };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { error: 'Solo se admiten URLs http o https.' };
+  }
+
+  if (parsed.username || parsed.password) {
+    return { error: 'La URL de Firefly III no debe incluir credenciales.' };
+  }
+
+  if (ALLOWED_FIREFLY_HOSTS.length > 0 && !ALLOWED_FIREFLY_HOSTS.includes(parsed.host.toLowerCase())) {
+    return { error: 'El host de Firefly III no está en la lista permitida.' };
+  }
+
+  return { baseUrl: (parsed.origin + parsed.pathname).replace(/\/$/, '') };
+}
+
+// Reenvía la respuesta remota sin asumir que el cuerpo es JSON.
+// Un 204, una página de error de un reverse proxy o un cuerpo vacío ya no
+// se convierten en un 500 que oculta la causa real.
+async function forwardResponse(res, response, origen) {
+  if (response.status === 204 || response.status === 304) {
+    return res.status(response.status).end();
+  }
+
+  const raw = await response.text();
+  if (!raw) {
+    return res.status(response.status).end();
+  }
+
+  try {
+    return res.status(response.status).json(JSON.parse(raw));
+  } catch {
+    return res.status(502).json({
+      error: `${origen} devolvió una respuesta que no es JSON.`,
+      upstreamStatus: response.status,
+      body: raw.slice(0, 300)
+    });
+  }
+}
 
 // Proxy para Groq
 app.post('/api/groq', async (req, res) => {
@@ -28,8 +86,7 @@ app.post('/api/groq', async (req, res) => {
       body: JSON.stringify(req.body)
     });
 
-    const data = await response.json();
-    res.status(response.status).json(data);
+    return forwardResponse(res, response, 'Groq');
   } catch (err) {
     console.error("Error en Proxy Groq:", err);
     res.status(500).json({ error: err.message });
@@ -40,13 +97,18 @@ app.post('/api/groq', async (req, res) => {
 app.all(/^\/api\/firefly\/(.*)/, async (req, res) => {
   try {
     const endpoint = req.params[0];
-    
+
     // Lee la URL y el Token enviados desde la PWA o del .env como fallback
-    const baseUrl = (req.headers['x-firefly-url'] || process.env.FIREFLY_URL || '').replace(/\/$/, '').trim();
+    const rawUrl = (req.headers['x-firefly-url'] || process.env.FIREFLY_URL || '').trim();
     const fireflyToken = (req.headers['x-firefly-token'] || process.env.FIREFLY_TOKEN || '').trim();
 
-    if (!baseUrl || !fireflyToken) {
+    if (!rawUrl || !fireflyToken) {
       return res.status(401).json({ error: "Falta la URL o el Token de Firefly III." });
+    }
+
+    const { baseUrl, error } = resolveFireflyBase(rawUrl);
+    if (error) {
+      return res.status(400).json({ error });
     }
 
     const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
@@ -66,9 +128,8 @@ app.all(/^\/api\/firefly\/(.*)/, async (req, res) => {
     }
 
     const response = await fetch(targetUrl, fetchOptions);
-    const data = await response.json();
 
-    res.status(response.status).json(data);
+    return forwardResponse(res, response, 'Firefly III');
   } catch (err) {
     console.error("Error en Proxy Firefly:", err);
     res.status(500).json({ error: err.message });

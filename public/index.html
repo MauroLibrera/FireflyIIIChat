@@ -95,18 +95,38 @@
   const statusText = document.getElementById("status-text");
   const sendBtn = document.getElementById("sendBtn");
 
-  // Cargar perfiles almacenados o devolver estructura inicial
+  // Estructura usada cuando no hay nada guardado o lo guardado es inservible
+  function estadoPerfilesInicial() {
+    return {
+      activeProfileId: "default",
+      profiles: {
+        "default": { name: "Personal", fireflyUrl: "", fireflyToken: "", groqKey: "" }
+      }
+    };
+  }
+
+  // Cargar perfiles almacenados. Un valor corrompido no puede dejar la app inusable.
   function getProfilesState() {
     const data = localStorage.getItem("firefly_profiles_cfg");
-    if (!data) {
-      return {
-        activeProfileId: "default",
-        profiles: {
-          "default": { name: "Personal", fireflyUrl: "", fireflyToken: "", groqKey: "" }
-        }
-      };
+    if (!data) return estadoPerfilesInicial();
+
+    try {
+      const state = JSON.parse(data);
+      const esValido = state && typeof state === "object"
+        && state.profiles && typeof state.profiles === "object"
+        && Object.keys(state.profiles).length > 0;
+
+      if (!esValido) throw new Error("Estructura de perfiles inválida");
+
+      // El perfil activo pudo haber sido eliminado en otra pestaña
+      if (!state.profiles[state.activeProfileId]) {
+        state.activeProfileId = Object.keys(state.profiles)[0];
+      }
+      return state;
+    } catch (err) {
+      console.warn("Configuracion de perfiles ilegible, se reinicia:", err);
+      return estadoPerfilesInicial();
     }
-    return JSON.parse(data);
   }
 
   // Guardar estado completo de perfiles
@@ -132,46 +152,73 @@
     if (e.key === "Enter") enviarMensaje();
   });
 
+  // Trae todas las páginas de un endpoint. Firefly III devuelve 50 elementos
+  // por página, así que sin esto el modelo no veía el resto de los datos.
+  async function fetchTodasLasPaginas(ruta) {
+    const items = [];
+    const maxPaginas = 20;
+    let pagina = 1;
+    let totalPaginas = 1;
+
+    do {
+      const separador = ruta.includes("?") ? "&" : "?";
+      const res = await fetch(`${ruta}${separador}limit=100&page=${pagina}`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(`Error consultando ${ruta} (HTTP ${res.status}).`);
+
+      const json = await res.json();
+      items.push(...(json.data || []));
+
+      const paginacion = json.meta && json.meta.pagination;
+      totalPaginas = (paginacion && paginacion.total_pages) || 1;
+      pagina++;
+    } while (pagina <= totalPaginas && pagina <= maxPaginas);
+
+    return items;
+  }
+
   // Cargar Cuentas, Tags y Categorías dinámicamente desde Firefly III
-    async function cargarDatosFirefly() {
-        try {
-            // Ya no requerimos pasar headers con Bearer Token, server.js los inyecta
-            const [resAsset, resRevenue, resTags, resCategories] = await Promise.all([
-                fetch("/api/firefly/accounts?type=asset" , {headers: getAuthHeaders()}),
-                fetch("/api/firefly/accounts?type=revenue", {headers: getAuthHeaders()}),
-                fetch("/api/firefly/tags", {headers: getAuthHeaders()}),
-                fetch("/api/firefly/categories", {headers: getAuthHeaders()})
-            ]);
+  async function cargarDatosFirefly() {
+    try {
+      const [asset, revenue, tags, categories] = await Promise.all([
+        fetchTodasLasPaginas("/api/firefly/accounts?type=asset"),
+        fetchTodasLasPaginas("/api/firefly/accounts?type=revenue"),
+        fetchTodasLasPaginas("/api/firefly/tags"),
+        fetchTodasLasPaginas("/api/firefly/categories")
+      ]);
 
-            if (!resAsset.ok || !resRevenue.ok || !resTags.ok || !resCategories.ok) {
-                throw new Error("Error consultando la API de Firefly III.");
-            }
+      assetAccounts = asset.map(a => a.attributes.name);
+      revenueAccounts = revenue.map(a => a.attributes.name);
+      existingTags = tags.map(t => t.attributes.tag);
+      existingCategories = categories.map(c => c.attributes.name);
 
-            const dataAsset = await resAsset.json();
-            const dataRevenue = await resRevenue.json();
-            const dataTags = await resTags.json();
-            const dataCategories = await resCategories.json();
+      if (assetAccounts.length > 0) defaultAssetAccount = assetAccounts[0];
 
-            assetAccounts = dataAsset.data.map(a => a.attributes.name);
-            revenueAccounts = dataRevenue.data.map(a => a.attributes.name);
-            existingTags = dataTags.data.map(t => t.attributes.tag);
-            existingCategories = dataCategories.data.map(c => c.attributes.name);
-
-            if (assetAccounts.length > 0) defaultAssetAccount = assetAccounts[0];
-
-            statusText.innerText = `Sincronizado (${assetAccounts.length} cuentas / ${existingCategories.length} cat / ${existingTags.length} tags)`;
-            statusText.style.color = "#4ade80";
-        } catch (err) {
-            statusText.innerText = "❌ Error al sincronizar datos.";
-            statusText.style.color = "#f87171";
-            console.error(err);
-        }
+      statusText.innerText = `Sincronizado (${assetAccounts.length} cuentas / ${existingCategories.length} cat / ${existingTags.length} tags)`;
+      statusText.style.color = "#4ade80";
+    } catch (err) {
+      statusText.innerText = "❌ Error al sincronizar datos.";
+      statusText.style.color = "#f87171";
+      console.error(err);
     }
+  }
 
-  function agregarMensaje(texto, tipo = "bot") {
+  // Escapar lo que venga de Groq o de Firefly III antes de insertarlo como HTML
+  function escaparHtml(valor) {
+    const div = document.createElement("div");
+    div.textContent = valor === null || valor === undefined ? "" : String(valor);
+    return div.innerHTML;
+  }
+
+  // esHtml solo puede ser true para marcado que construye la app, nunca para
+  // texto del usuario ni del modelo.
+  function agregarMensaje(texto, tipo = "bot", esHtml = false) {
     const msg = document.createElement("div");
     msg.className = `message ${tipo}`;
-    msg.innerHTML = texto;
+    if (esHtml) {
+      msg.innerHTML = texto;
+    } else {
+      msg.textContent = texto;
+    }
     chat.appendChild(msg);
     chat.scrollTop = chat.scrollHeight;
   }
@@ -209,7 +256,7 @@
     if (transaccionPendiente && esRespuestaAfirmativa(mensajeTexto)) {
       agregarMensaje("⏳ Registrando transacción en Firefly III...", "bot");
       const resultado = await crearTransaccionFirefly(transaccionPendiente);
-      agregarMensaje(resultado, "bot");
+      agregarMensaje(resultado, "bot", true);
       transaccionPendiente = null;
       return;
     }
@@ -230,10 +277,10 @@
       agregarMensaje(interpretacion.mensaje_confirmacion, "bot");
     } else if (interpretacion.type === "query") {
       const respuestaConsulta = await procesarConsultaFirefly(interpretacion);
-      agregarMensaje(respuestaConsulta, "bot");
+      agregarMensaje(respuestaConsulta, "bot", true);
     } else {
       const resultado = await crearTransaccionFirefly(interpretacion);
-      agregarMensaje(resultado, "bot");
+      agregarMensaje(resultado, "bot", true);
     }
   }
 
@@ -354,11 +401,11 @@
     ? data.date.split("-").map(Number) 
     : [new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()];
 
-    const fechaBase = new Date(year, month - 1, day);
-
     for (let i = 0; i < numCuotas; i++) {
-        // Crear objeto fecha para la cuota i
-        const fechaCuota = new Date(year, month - 1 + i, day);
+        // Fecha de la cuota i. El dia se recorta al ultimo del mes destino,
+        // porque new Date(2026, 0 + 1, 31) desbordaria al 3 de marzo.
+        const diasDelMes = new Date(year, month + i, 0).getDate();
+        const fechaCuota = new Date(year, month - 1 + i, Math.min(day, diasDelMes));
 
         // Formatear a YYYY-MM-DD sin desfase UTC
         const fechaISO = fechaCuota.toLocaleDateString("sv-SE");
@@ -392,18 +439,18 @@
     }
 
     const metaInfo = [];
-    if (data.category_name) metaInfo.push(`📁 Categoría: <b>${data.category_name}</b>`);
-    if (data.tags && data.tags.length > 0) metaInfo.push(`🏷️ Tags: ${data.tags.map(t => `#${t}`).join(", ")}`);
+    if (data.category_name) metaInfo.push(`📁 Categoría: <b>${escaparHtml(data.category_name)}</b>`);
+    if (data.tags && data.tags.length > 0) metaInfo.push(`🏷️ Tags: ${data.tags.map(t => `#${escaparHtml(t)}`).join(", ")}`);
     
     const extraHtml = metaInfo.length > 0 ? `<br><small>${metaInfo.join(" | ")}</small>` : "";
 
     if (data.type === "transfer") {
-      return `✅ Transferencia de <b>$${data.amount}</b> de <i>${data.source_name}</i> a <i>${data.destination_name}</i>.${extraHtml}`;
+      return `✅ Transferencia de <b>$${escaparHtml(data.amount)}</b> de <i>${escaparHtml(data.source_name)}</i> a <i>${escaparHtml(data.destination_name)}</i>.${extraHtml}`;
     }
 
     return numCuotas > 1
-      ? `✅ Registradas <b>${numCuotas} cuotas</b> de $${montoCuota} en <i>${data.source_name}</i> para "${data.description}".${extraHtml}`
-      : `✅ Registrado gasto de <b>$${data.amount}</b> en <i>${data.source_name}</i> para "${data.description}".${extraHtml}`;
+      ? `✅ Registradas <b>${numCuotas} cuotas</b> de $${montoCuota} en <i>${escaparHtml(data.source_name)}</i> para "${escaparHtml(data.description)}".${extraHtml}`
+      : `✅ Registrado gasto de <b>$${escaparHtml(data.amount)}</b> en <i>${escaparHtml(data.source_name)}</i> para "${escaparHtml(data.description)}".${extraHtml}`;
   }
 
   async function procesarConsultaFirefly(data) {
@@ -428,7 +475,7 @@
 
         let html = "<b>💳 Saldos actuales:</b><br>";
         cuentas.forEach(c => {
-        html += `• <b>${c.nombre}:</b> ${c.moneda}${c.saldo.toLocaleString("es-AR", { minimumFractionDigits: 2 })}<br>`;
+        html += `• <b>${escaparHtml(c.nombre)}:</b> ${escaparHtml(c.moneda)}${c.saldo.toLocaleString("es-AR", { minimumFractionDigits: 2 })}<br>`;
         });
         return html;
     }
@@ -450,7 +497,7 @@
         const attr = b.attributes;
         // Extraer datos asignados y gastados del objeto
         const gastado = attr.spent ? Math.abs(parseFloat(attr.spent[0]?.sum || 0)) : 0;
-        html += `• <b>${attr.name}:</b> Gastado $${gastado.toLocaleString("es-AR")}<br>`;
+        html += `• <b>${escaparHtml(attr.name)}:</b> Gastado $${gastado.toLocaleString("es-AR")}<br>`;
         });
         return html;
     }
@@ -489,7 +536,7 @@
         const monto = parseFloat(tx.amount).toLocaleString("es-AR", { minimumFractionDigits: 2 });
         const fecha = tx.date ? tx.date.split("T")[0] : "";
         
-        html += `• <i>${fecha}</i> | <b>${tx.description}</b>: ${signo}$${monto} (${tx.source_name})<br>`;
+        html += `• <i>${escaparHtml(fecha)}</i> | <b>${escaparHtml(tx.description)}</b>: ${signo}$${monto} (${escaparHtml(tx.source_name)})<br>`;
     });
     
     return html;
