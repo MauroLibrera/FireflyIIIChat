@@ -379,6 +379,7 @@
             description: numCuotas > 1 ? `${data.description} (Cuota ${i + 1}/${numCuotas})` : data.description,
             source_name: data.source_name,
             destination_name: data.destination_name,
+            category_name: data.category_name || null,
             tags: data.tags || []
         });
     }
@@ -420,11 +421,6 @@
   }
 
   async function procesarConsultaFirefly(data) {
-    const headers = {
-        "Authorization": `Bearer ${FIREFLY_TOKEN}`,
-        "Accept": "application/json"
-    };
-
     // A. Consulta de Saldos
     if (data.query_type === "balance") {
         const res = await fetch("/api/firefly/accounts?type=asset",{headers: getAuthHeaders()});
@@ -453,8 +449,11 @@
 
     // B. Consulta de Presupuestos
     if (data.query_type === "budget") {
-        const hoy = new Date().toLocaleDateString("sv-SE");
-        const res = await fetch("/api/firefly/budgets",{headers: getAuthHeaders()});
+        // Firefly solo devuelve "spent" cuando se acota el rango de fechas
+        const ahora = new Date();
+        const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toLocaleDateString("sv-SE");
+        const finMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0).toLocaleDateString("sv-SE");
+        const res = await fetch(`/api/firefly/budgets?start=${inicioMes}&end=${finMes}`, { headers: getAuthHeaders() });
         if (!res.ok) throw new Error("No se pudieron consultar los presupuestos.");
 
         const json = await res.json();
