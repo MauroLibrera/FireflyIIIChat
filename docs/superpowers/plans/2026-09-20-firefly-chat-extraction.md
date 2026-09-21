@@ -806,7 +806,15 @@ test('upsertProfile replaces an existing profile', () => {
 
 test('removeProfile keeps at least one profile', () => {
   const state = initialProfilesState();
-  assert.deepEqual(removeProfile(state, 'default'), state);
+  // assert.equal, not deepEqual: this pins reference identity, so a future
+  // refactor that starts cloning on this branch fails instead of passing.
+  assert.equal(removeProfile(state, 'default'), state);
+});
+
+test('normalize rejects an array masquerading as a profiles record', () => {
+  assert.equal(normalizeProfilesState({ profiles: ['a', 'b'] }).activeProfileId, 'default');
+  assert.equal(Array.isArray(normalizeProfilesState({ profiles: ['a', 'b'] }).profiles), false);
+  assert.equal(normalizeProfilesState(['a', 'b']).activeProfileId, 'default');
 });
 
 test('removeProfile activates a survivor', () => {
@@ -852,14 +860,30 @@ function fakeStorage(initial = null) {
   };
 }
 
+// The store warns on every recovered failure. Left alone that prints stack
+// traces into a green run, so capture the warnings and assert on them instead:
+// the noise becomes the assertion that the recovery path actually ran.
+function captureWarnings(fn) {
+  const original = console.warn;
+  const calls = [];
+  console.warn = (...args) => calls.push(args);
+  try {
+    return { result: fn(), calls };
+  } finally {
+    console.warn = original;
+  }
+}
+
 test('reading empty storage yields the initial state', () => {
   const store = createProfileStore({ storage: fakeStorage() });
   assert.equal(store.read().activeProfileId, 'default');
 });
 
-test('corrupt storage does not throw and recovers', () => {
+test('corrupt storage does not throw, recovers, and warns once', () => {
   const store = createProfileStore({ storage: fakeStorage('{{{ not json') });
-  assert.equal(store.read().activeProfileId, 'default');
+  const { result, calls } = captureWarnings(() => store.read());
+  assert.equal(result.activeProfileId, 'default');
+  assert.equal(calls.length, 1);
 });
 
 test('a round trip preserves the state', () => {
@@ -872,12 +896,15 @@ test('a round trip preserves the state', () => {
 
 test('a storage that throws on read still yields a usable state', () => {
   const store = createProfileStore({ storage: { getItem() { throw new Error('denied'); }, setItem() {} } });
-  assert.equal(store.read().activeProfileId, 'default');
+  const { result, calls } = captureWarnings(() => store.read());
+  assert.equal(result.activeProfileId, 'default');
+  assert.equal(calls.length, 1);
 });
 
 test('a storage that throws on write does not propagate', () => {
   const store = createProfileStore({ storage: { getItem: () => null, setItem() { throw new Error('quota'); } } });
-  assert.doesNotThrow(() => store.write(store.read()));
+  const { calls } = captureWarnings(() => assert.doesNotThrow(() => store.write(store.read())));
+  assert.equal(calls.length, 1);
 });
 ```
 
@@ -903,8 +930,16 @@ export function initialProfilesState() {
 
 // Un valor corrompido no puede dejar la app inusable.
 export function normalizeProfilesState(raw) {
+  // Array.isArray importa: un array es typeof "object" y tiene claves, así que
+  // { profiles: ["a","b"] } pasaría el chequeo y rompería el contrato Record.
   const esValido =
-    raw && typeof raw === 'object' && raw.profiles && typeof raw.profiles === 'object' && Object.keys(raw.profiles).length > 0;
+    raw &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    raw.profiles &&
+    typeof raw.profiles === 'object' &&
+    !Array.isArray(raw.profiles) &&
+    Object.keys(raw.profiles).length > 0;
 
   if (!esValido) return initialProfilesState();
 
