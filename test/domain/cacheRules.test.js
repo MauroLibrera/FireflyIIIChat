@@ -18,6 +18,37 @@ test('any other path under /api/ is never cacheable', () => {
   assert.equal(shouldCache('/api/anything'), false);
 });
 
+// Fix round 1: shouldCache no puede depender de propiedades incidentales de
+// otros archivos (la regex case-sensitive del proxy, el guard response.ok
+// del worker) para que /api/ en otra forma quede afuera. Tiene que resolverlo
+// sola, a partir únicamente de su propio input.
+
+test('an uppercase /API/ variant is never cacheable', () => {
+  assert.equal(shouldCache('/API/firefly/accounts'), false);
+});
+
+test('a mixed-case /Api/ variant is never cacheable', () => {
+  assert.equal(shouldCache('/Api/Groq'), false);
+});
+
+test('a full URL whose pathname is under /api/ is never cacheable', () => {
+  assert.equal(shouldCache('https://host/api/groq'), false);
+});
+
+test('an empty string is never cacheable', () => {
+  assert.equal(shouldCache(''), false);
+});
+
+// Control en minúscula: el camino feliz sigue anclado después del fix de
+// normalización, tanto para un pathname suelto como para una URL completa.
+test('a lowercase /api/ path stays never-cacheable (control)', () => {
+  assert.equal(shouldCache('/api/groq'), false);
+});
+
+test('a full URL whose pathname is not under /api/ is cacheable (control)', () => {
+  assert.equal(shouldCache('https://host/index.html'), true);
+});
+
 // Casos felices: lo que compone el shell de la app (y otros estáticos que
 // no son /api/) sí es cacheable.
 
