@@ -74,10 +74,22 @@ export function renderConfirmationCard(intent, montos) {
   const tipoLegible = ETIQUETAS_TIPO[intent.type] || intent.type;
   const numCuotas = montos.length;
 
+  // Mismo formato que la fila Monto (formatCurrency), no el string crudo de
+  // splitAmountIntoInstallments (toFixed(2), pensado para el payload de la
+  // API, no para lectura humana). Antes del fix round 1 la tarjeta mezclaba
+  // "$10.000,00" con "$3333.34" en el mismo cartel.
   const filaCuotas =
     numCuotas > 1
-      ? filaConfirmacion('Cuotas', `${numCuotas} de $${montos[0]} c/u`)
+      ? filaConfirmacion('Cuotas', `${numCuotas} de $${formatCurrency(montos[0])} c/u`)
       : filaConfirmacion('Cuotas', String(intent.installments ?? numCuotas));
+
+  // Mismo formato que renderTransactionResult: "#tag" separados por coma,
+  // para que la confirmación y el resultado posterior se lean igual. El
+  // string se arma sin escapar todavía (# y ", " no son caracteres
+  // especiales) y filaConfirmacion escapa el conjunto una sola vez; escapar
+  // cada tag y de nuevo el string unido lo habría escapado dos veces.
+  const filaTags =
+    intent.tags && intent.tags.length > 0 ? filaConfirmacion('Tags', intent.tags.map((t) => `#${t}`).join(', ')) : '';
 
   const filas = [
     filaConfirmacion('Tipo', tipoLegible),
@@ -86,6 +98,7 @@ export function renderConfirmationCard(intent, montos) {
     filaConfirmacion('Origen', intent.source_name),
     filaConfirmacion('Destino', intent.destination_name),
     filaConfirmacion('Categoría', intent.category_name),
+    filaTags,
     filaConfirmacion('Fecha', intent.date),
     filaCuotas
   ].join('');

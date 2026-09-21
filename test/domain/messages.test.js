@@ -175,7 +175,31 @@ test('renderConfirmationCard shows the installment count and the per-installment
   );
 
   assert.match(html, /3/);
-  assert.match(html, /3333\.34/);
+  assert.match(html, /3\.333,34/);
+});
+
+// Fix round 1, finding 2: la tarjeta mezclaba dos formatos de moneda en el
+// mismo cartel (Monto con formatCurrency, Cuotas con el string crudo de
+// splitAmountIntoInstallments). Se fija el formato acá para que no pueda
+// volver a divergir en silencio. No se toca renderTransactionResult: ese
+// comportamiento es deliberado y preexistente de un plan anterior.
+test('renderConfirmationCard formats the per-installment amount the same way as Monto, not as the raw API string', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 10000,
+      description: 'Notebook',
+      source_name: 'Visa',
+      destination_name: 'Tienda',
+      category_name: 'Tecnología',
+      date: '2026-01-15',
+      installments: 3
+    },
+    ['3333.34', '3333.33', '3333.33']
+  );
+
+  assert.match(html, /3\.333,34/);
+  assert.doesNotMatch(html, /3333\.34/);
 });
 
 test('renderConfirmationCard escapes a hostile description instead of injecting markup', () => {
@@ -295,4 +319,69 @@ test('renderConfirmationCard includes distinguishable confirm and cancel control
   assert.match(html, /confirmation-cancel-btn/);
   // Nada de estilos inline: la CSP de la Task 7 los prohíbe.
   assert.doesNotMatch(html, /style=/);
+});
+
+// Fix round 1, finding 1: tags es uno de los ocho campos que
+// services/fireflyApi.js manda a Firefly y la tarjeta no lo mostraba. Se
+// presenta igual que renderTransactionResult (#tag separados por coma) para
+// que la confirmación y el resultado posterior se lean igual.
+test('renderConfirmationCard shows tags escaped, formatted as #tag joined by commas', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 100,
+      description: 'Compra',
+      source_name: 'Galicia',
+      destination_name: 'Comercio',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1,
+      tags: ['super', '<script>alert(1)</script>']
+    },
+    ['100.00']
+  );
+
+  assert.match(html, /#super/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /#&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /#super, #&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
+test('renderConfirmationCard omits the tags row when tags is absent', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 100,
+      description: 'Compra',
+      source_name: 'Galicia',
+      destination_name: 'Comercio',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['100.00']
+  );
+
+  assert.doesNotMatch(html, /Tags/);
+  assert.doesNotMatch(html, /undefined/);
+});
+
+test('renderConfirmationCard omits the tags row when tags is an empty array', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 100,
+      description: 'Compra',
+      source_name: 'Galicia',
+      destination_name: 'Comercio',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1,
+      tags: []
+    },
+    ['100.00']
+  );
+
+  assert.doesNotMatch(html, /Tags/);
+  assert.doesNotMatch(html, /undefined/);
 });
