@@ -116,49 +116,61 @@ test('a missing date defaults to context.today', () => {
 });
 
 test('a fractional installments count is rejected', () => {
-  const result = validateIntent({ type: 'query', installments: 2.5 }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: 2.5 }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
 
 test('a zero installments count is rejected', () => {
-  const result = validateIntent({ type: 'query', installments: 0 }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: 0 }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
 
 test('a negative installments count is rejected', () => {
-  const result = validateIntent({ type: 'query', installments: -1 }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: -1 }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
 
+
+test('a query ignores installments entirely, however the model fills the field', () => {
+  // El modelo completa el esquema plano con ceros para los campos que no
+  // aplican a una consulta. Rechazar installments: 0 en una consulta hacía
+  // que preguntar por los últimos movimientos fallara.
+  for (const valor of [0, -1, 2.5, '0', null, undefined]) {
+    const result = validateIntent({ type: 'query', query_type: 'recent_transactions', amount: 0, installments: valor }, CONTEXT);
+    assert.equal(result.ok, true, 'installments ' + JSON.stringify(valor) + ' should be ignored on a query');
+    assert.equal(result.intent.installments, 1);
+  }
+});
+
 test('a stringified installments count is coerced, same as amount', () => {
-  const result = validateIntent({ type: 'query', installments: '3' }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: '3' }, CONTEXT);
   assert.equal(result.ok, true);
   assert.equal(result.intent.installments, 3);
 });
 
 test('a fractional installments string is rejected even after coercion', () => {
-  const result = validateIntent({ type: 'query', installments: '3.5' }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: '3.5' }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
 
 test('a zero installments string is rejected even after coercion', () => {
-  const result = validateIntent({ type: 'query', installments: '0' }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: '0' }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
 
 test('a negative installments string is rejected even after coercion', () => {
-  const result = validateIntent({ type: 'query', installments: '-1' }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: '-1' }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
 
 test('a non-numeric installments string is rejected', () => {
-  const result = validateIntent({ type: 'query', installments: 'abc' }, CONTEXT);
+  const result = validateIntent({ type: 'withdrawal', amount: 3000, source_name: 'Galicia', installments: 'abc' }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });

@@ -90,7 +90,11 @@ export function validateIntent(raw, context) {
     intent.date = context.today;
   }
 
-  if (intent.installments !== undefined && intent.installments !== null) {
+  // Mismo criterio que "amount": una consulta no tiene cuotas. El modelo
+  // completa el esquema plano con ceros en los campos que no aplican, así que
+  // validar installments en una consulta hacía fallar "¿cuáles fueron mis
+  // últimos movimientos?" con "La cantidad de cuotas 0 no es válida".
+  if (intent.type !== 'query' && intent.installments !== undefined && intent.installments !== null) {
     // Mismo criterio que "amount": una cadena numérica se coerciona, no se
     // rechaza. La corrección de la ronda 1 hizo explícito que el brief
     // original diferenciaba installments de amount sin motivo real.
