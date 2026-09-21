@@ -1,8 +1,9 @@
 import { splitAmountIntoInstallments, installmentDates } from '../domain/installments.js';
+import { toIsoDate } from '../domain/format.js';
 
 const DEFAULT_MAX_PAGES = 20;
 
-export function createFireflyApi({ fetchImpl = fetch, getHeaders, maxPages = DEFAULT_MAX_PAGES }) {
+export function createFireflyApi({ fetchImpl = fetch, getHeaders, maxPages = DEFAULT_MAX_PAGES, now = () => new Date() }) {
   async function request(path, options = {}) {
     return fetchImpl(path, { ...options, headers: getHeaders() });
   }
@@ -48,8 +49,11 @@ export function createFireflyApi({ fetchImpl = fetch, getHeaders, maxPages = DEF
 
   async function createTransaction(intent) {
     const numCuotas = intent.installments || 1;
+    // Un JSON válido no garantiza un "date" poblado: el modelo puede omitirlo.
+    // Sin este default se cae con "Cannot read properties of undefined (reading 'split')".
+    const fechaInicial = intent.date || toIsoDate(now());
     const montos = splitAmountIntoInstallments(intent.amount, numCuotas);
-    const fechas = installmentDates(intent.date, numCuotas);
+    const fechas = installmentDates(fechaInicial, numCuotas);
 
     const transactions = montos.map((amount, i) => ({
       type: intent.type,

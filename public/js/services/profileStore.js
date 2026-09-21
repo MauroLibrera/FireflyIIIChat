@@ -18,7 +18,10 @@ export function createProfileStore({ storage, key = PROFILES_STORAGE_KEY }) {
       try {
         return normalizeProfilesState(JSON.parse(crudo));
       } catch (err) {
-        console.warn('Configuración de perfiles ilegible, se reinicia:', err);
+        // Solo el nombre del error: SyntaxError de V8 incluye un fragmento del
+        // texto que falló al parsear, y ese texto es el blob de perfiles con
+        // el token de Firefly y la key de Groq adentro.
+        console.warn('Configuración de perfiles ilegible, se reinicia:', err.name);
         return initialProfilesState();
       }
     },

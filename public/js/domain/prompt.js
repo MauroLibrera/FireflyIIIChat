@@ -71,7 +71,11 @@ export function buildSystemPrompt({ today, assetAccounts, revenueAccounts, categ
     - Si no se especifica el nombre de la tarjeta pero hay cuotas, busca una cuenta de activo que contenga la palabra "Tarjeta" o "Crédito".
     8. "date":
     - Si el usuario no menciona ninguna fecha, usá la fecha de hoy ("${today}").
-    - Si menciona fechas relativas (ej: "ayer", "hace 3 días", "el lunes pasado", "el 15 de este mes"), calculá y devolvé la fecha exacta en formato "YYYY-MM-DD" tomando como referencia que hoy es ${today}.`;
+    - Si menciona fechas relativas (ej: "ayer", "hace 3 días", "el lunes pasado", "el 15 de este mes"), calculá y devolvé la fecha exacta en formato "YYYY-MM-DD" tomando como referencia que hoy es ${today}.
+
+    REGLAS DE CONFIRMACIÓN:
+    1. Si falta información clave (como la cuenta de origen o el monto exacto) o si la solicitud es ambigua, establece "requiere_confirmacion": true.
+    2. Si "requiere_confirmacion" es true, proporciona un "mensaje_confirmacion" claro en lenguaje natural pidiendo la validación del usuario y NO ejecutes la acción inmediatamente.`;
 }
 
 export function buildMessages({ systemPrompt, history = [], userText }) {

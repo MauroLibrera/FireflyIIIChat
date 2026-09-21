@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGroqApi } from '../../public/js/services/groqApi.js';
+import { createGroqApi, DEFAULT_MODEL } from '../../public/js/services/groqApi.js';
 
 const okResponse = (content) => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) });
 
@@ -19,8 +19,21 @@ test('interpret sends the messages and requests a json object', async () => {
   await api.interpret({ messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'hola' }] });
 
   assert.equal(body.messages.length, 2);
+  assert.equal(body.model, DEFAULT_MODEL);
   assert.equal(body.response_format.type, 'json_object');
   assert.equal(body.temperature, 0.1);
+});
+
+test('interpret sends the injected headers on the request', async () => {
+  let headers = null;
+  const api = createGroqApi({
+    fetchImpl: async (_url, opts) => { headers = opts.headers; return okResponse('{}'); },
+    getHeaders: () => ({ 'x-groq-key': 'secret-key' })
+  });
+
+  await api.interpret({ messages: [] });
+
+  assert.deepEqual(headers, { 'x-groq-key': 'secret-key' });
 });
 
 test('interpret reports a non-JSON model answer instead of throwing a parse error', async () => {

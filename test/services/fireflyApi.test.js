@@ -83,6 +83,19 @@ test('createTransaction sends a single entry with no group title', async () => {
   assert.equal(body.group_title, undefined);
 });
 
+test('createTransaction defaults to today when the model omits date', async () => {
+  let body = null;
+  const api = createFireflyApi({
+    fetchImpl: async (_url, opts) => { body = JSON.parse(opts.body); return { ok: true, status: 200, json: async () => ({}) }; },
+    getHeaders: () => ({}),
+    now: () => new Date(2026, 8, 21) // 21 de septiembre de 2026, reloj inyectado
+  });
+
+  await api.createTransaction({ type: 'withdrawal', amount: 100, description: 'Sin fecha', source_name: 'Galicia', destination_name: 'Bar', tags: [] });
+
+  assert.equal(body.transactions[0].date, '2026-09-21');
+});
+
 test('createTransaction surfaces the Firefly message on failure', async () => {
   const api = createFireflyApi({
     fetchImpl: async () => ({ ok: false, status: 422, json: async () => ({ message: 'Account not found' }) }),
@@ -113,6 +126,36 @@ test('balances maps account attributes', async () => {
     getHeaders: () => ({})
   });
   assert.deepEqual(await api.balances(), [{ nombre: 'Galicia', saldo: 1234.5, moneda: '$' }]);
+});
+
+test('balances sends the injected headers on the request', async () => {
+  let headers = null;
+  const api = createFireflyApi({
+    fetchImpl: async (_url, opts) => {
+      headers = opts.headers;
+      return { ok: true, status: 200, json: async () => ({ data: [], meta: { pagination: { total_pages: 1 } } }) };
+    },
+    getHeaders: () => ({ 'x-firefly-token': 'secret-token' })
+  });
+
+  await api.balances();
+
+  assert.deepEqual(headers, { 'x-firefly-token': 'secret-token' });
+});
+
+test('createTransaction sends the injected headers on the request', async () => {
+  let headers = null;
+  const api = createFireflyApi({
+    fetchImpl: async (_url, opts) => {
+      headers = opts.headers;
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
+    getHeaders: () => ({ 'x-firefly-token': 'secret-token' })
+  });
+
+  await api.createTransaction({ type: 'withdrawal', amount: 1, date: '2026-03-10', description: 'x', source_name: 'y', destination_name: 'z', tags: [] });
+
+  assert.deepEqual(headers, { 'x-firefly-token': 'secret-token' });
 });
 
 test('recentTransactions flattens grouped entries', async () => {

@@ -66,6 +66,15 @@ test('removeProfile keeps at least one profile', () => {
   assert.equal(removeProfile(state, 'default'), state);
 });
 
+test('removeProfile keeps the current active profile when it is not the one removed', () => {
+  let state = initialProfilesState();
+  state = upsertProfile(state, 'p2', { name: 'Nuevo', fireflyUrl: '', fireflyToken: '', groqKey: '' });
+  // p2 queda activo tras el upsert; borrar "default" (no activo) no debe repuntar el activo.
+  const next = removeProfile(state, 'default');
+  assert.equal(Object.keys(next.profiles).length, 1);
+  assert.equal(next.activeProfileId, 'p2');
+});
+
 test('removeProfile activates a survivor', () => {
   let state = initialProfilesState();
   state = upsertProfile(state, 'p2', { name: 'Nuevo', fireflyUrl: '', fireflyToken: '', groqKey: '' });

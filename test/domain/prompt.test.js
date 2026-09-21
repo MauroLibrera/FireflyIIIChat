@@ -30,7 +30,21 @@ test('the prompt states the confirmation rule exactly once', () => {
   const prompt = buildSystemPrompt(context);
   const occurrences = prompt.split('REGLAS OBLIGATORIAS DE CONFIRMACIÓN').length - 1;
   assert.equal(occurrences, 1);
-  assert.equal(prompt.includes('REGLAS DE CONFIRMACIÓN:'), false);
+});
+
+test('the prompt restores the missing-information confirmation rules', () => {
+  const prompt = buildSystemPrompt(context);
+  assert.match(prompt, /REGLAS DE CONFIRMACIÓN:/);
+  assert.match(
+    prompt,
+    /1\. Si falta información clave \(como la cuenta de origen o el monto exacto\) o si la solicitud es ambigua, establece "requiere_confirmacion": true\./
+  );
+  assert.match(
+    prompt,
+    /2\. Si "requiere_confirmacion" es true, proporciona un "mensaje_confirmacion" claro en lenguaje natural pidiendo la validación del usuario y NO ejecutes la acción inmediatamente\./
+  );
+  // La regla 3 terminaba a mitad de frase en el original; el owner decidió no restaurarla.
+  assert.doesNotMatch(prompt, /Si el usuario responde afirmativamente/);
 });
 
 test('the prompt keeps its worked confirmation example', () => {
