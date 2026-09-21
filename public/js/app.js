@@ -91,15 +91,43 @@ async function submitIntent(intent) {
   return chat.renderTransactionResult(intent, montos);
 }
 
+// Misma tarjeta para ofrecer la confirmación inicial y para ofrecer un
+// reintento (R4): arma el HTML a partir de pendingIntent y la cablea a los
+// mismos confirmPendingIntent/cancelPendingIntent de siempre, así las dos
+// situaciones no pueden divergir en cómo se resuelven.
+function offerPendingIntentCard() {
+  const montos = pendingIntent.type === 'query' ? [] : splitAmountIntoInstallments(pendingIntent.amount, pendingIntent.installments || 1);
+  const html = chat.renderConfirmationCard(pendingIntent, montos);
+
+  chat.addConfirmationCard(html, {
+    onConfirm: () => runProtected(confirmPendingIntent),
+    onCancel: () => runProtected(cancelPendingIntent)
+  });
+}
+
+function showError(err) {
+  chat.addMessage(`❌ Error: ${err.message}`, 'bot error');
+}
+
 // Un único camino para "confirmar" y otro para "cancelar", sin importar si
 // llegaron por texto ("sí"/"no") o por los botones de la tarjeta: así no
 // pueden divergir con el tiempo y terminar haciendo cosas distintas frente
 // al mismo pedido del usuario.
 async function confirmPendingIntent() {
   chat.addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
-  const resultado = await submitIntent(pendingIntent);
-  pendingIntent = null;
-  chat.addMessage(resultado, 'bot', true);
+  try {
+    const resultado = await submitIntent(pendingIntent);
+    pendingIntent = null;
+    chat.addMessage(resultado, 'bot', true);
+  } catch (err) {
+    // R4: pendingIntent no se limpia acá porque el await de arriba falló
+    // antes de esa línea, así que la intención ya validada sobrevive al
+    // error. Se reutiliza la misma tarjeta de confirmación para ofrecer un
+    // reintento que no vuelve a pasarle la frase al modelo.
+    showError(err);
+    chat.addMessage('🔁 Podés reintentar el envío sin volver a escribir el pedido.', 'bot');
+    offerPendingIntentCard();
+  }
 }
 
 function cancelPendingIntent() {
@@ -109,12 +137,15 @@ function cancelPendingIntent() {
 
 // Mismo manejo de errores para el envío por texto y para los clicks de la
 // tarjeta: sendMessage ya no es el único lugar que atrapa un fallo de red.
+// confirmPendingIntent ya maneja su propio error (y ofrece el reintento de
+// R4), así que este catch cubre todo lo demás: interpretar con el modelo,
+// validar, o resolver una consulta.
 async function runProtected(accion) {
   sendBtn.disabled = true;
   try {
     await accion();
   } catch (err) {
-    chat.addMessage(`❌ Error: ${err.message}`, 'bot error');
+    showError(err);
   } finally {
     sendBtn.disabled = false;
   }
@@ -169,13 +200,7 @@ async function processUserMessage(texto) {
     // Tarjeta estructurada (Task 2): el usuario confirma contra los campos
     // reales que se van a enviar, no contra la frase que escribió el modelo
     // sobre sí mismo (mensaje_confirmacion ya no se usa acá).
-    const montos = intent.type === 'query' ? [] : splitAmountIntoInstallments(intent.amount, intent.installments || 1);
-    const html = chat.renderConfirmationCard(intent, montos);
-
-    chat.addConfirmationCard(html, {
-      onConfirm: () => runProtected(confirmPendingIntent),
-      onCancel: () => runProtected(cancelPendingIntent)
-    });
+    offerPendingIntentCard();
     return;
   }
 
@@ -184,7 +209,11 @@ async function processUserMessage(texto) {
     return;
   }
 
-  chat.addMessage(await submitIntent(intent), 'bot', true);
+  // Sin confirmación previa no hay tarjeta, pero el envío pasa igual por
+  // pendingIntent + confirmPendingIntent (R4): si Firefly falla acá, la
+  // intención ya validada tampoco se pierde.
+  pendingIntent = intent;
+  await confirmPendingIntent();
 }
 
 async function sendMessage() {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGroqApi, DEFAULT_MODEL } from '../../public/js/services/groqApi.js';
+import { createGroqApi, DEFAULT_MODEL, GROQ_TIMEOUT_MS } from '../../public/js/services/groqApi.js';
 
 const okResponse = (content) => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) });
 
@@ -55,4 +55,58 @@ test('interpret tolerates an error body that is not JSON', async () => {
     getHeaders: () => ({})
   });
   await assert.rejects(() => api.interpret({ messages: [] }), /Bad Gateway/);
+});
+
+test('GROQ_TIMEOUT_MS is exported and defaults to 20000', () => {
+  assert.equal(GROQ_TIMEOUT_MS, 20000);
+});
+
+test('interpret sends an AbortSignal', async () => {
+  let signal = null;
+  const api = createGroqApi({
+    fetchImpl: async (_url, opts) => { signal = opts.signal; return okResponse('{}'); },
+    getHeaders: () => ({})
+  });
+
+  await api.interpret({ messages: [] });
+
+  assert.ok(signal instanceof AbortSignal);
+});
+
+// No hay que esperar el timeout real: se espía la construcción de la señal
+// y se verifica con qué valor se llamó.
+test('a custom timeoutMs reaches the signal construction', async (t) => {
+  const original = AbortSignal.timeout;
+  let capturedMs = null;
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    capturedMs = ms;
+    return original(ms);
+  });
+
+  const api = createGroqApi({ fetchImpl: async () => okResponse('{}'), getHeaders: () => ({}), timeoutMs: 7 });
+
+  await api.interpret({ messages: [] });
+
+  assert.equal(capturedMs, 7);
+});
+
+test('an aborted request surfaces a timeout message instead of AbortError', async () => {
+  const abortError = new Error('The operation was aborted');
+  abortError.name = 'AbortError';
+
+  const api = createGroqApi({
+    fetchImpl: async () => { throw abortError; },
+    getHeaders: () => ({})
+  });
+
+  await assert.rejects(() => api.interpret({ messages: [] }), (err) => {
+    assert.match(err.message, /tiempo de espera/);
+    assert.doesNotMatch(err.message, /AbortError/);
+    return true;
+  });
+});
+
+test('interpret still succeeds normally with the timeout signal attached', async () => {
+  const api = createGroqApi({ fetchImpl: async () => okResponse('{"type":"withdrawal"}'), getHeaders: () => ({}) });
+  assert.deepEqual(await api.interpret({ messages: [] }), { type: 'withdrawal' });
 });

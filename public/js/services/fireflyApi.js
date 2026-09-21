@@ -3,9 +3,24 @@ import { toIsoDate } from '../domain/format.js';
 
 const DEFAULT_MAX_PAGES = 20;
 
-export function createFireflyApi({ fetchImpl = fetch, getHeaders, maxPages = DEFAULT_MAX_PAGES, now = () => new Date() }) {
+// fetch no tiene timeout por defecto: si el proxy se cuelga, la página se
+// cuelga con él. Este límite es sobre el salto navegador -> proxy; el proxy
+// tiene el suyo propio (server/proxy/firefly.js) para el salto proxy ->
+// Firefly, y ambos valen 15000 por la misma razón sin ser el mismo timeout.
+export const FIREFLY_TIMEOUT_MS = 15000;
+
+export function createFireflyApi({ fetchImpl = fetch, getHeaders, maxPages = DEFAULT_MAX_PAGES, now = () => new Date(), timeoutMs = FIREFLY_TIMEOUT_MS }) {
   async function request(path, options = {}) {
-    return fetchImpl(path, { ...options, headers: getHeaders() });
+    try {
+      return await fetchImpl(path, { ...options, headers: getHeaders(), signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err) {
+      // Un abort por timeout no puede llegarle al usuario como "AbortError":
+      // esa palabra no le dice qué pasó. Cualquier otro error sigue de largo.
+      if (err.name === 'AbortError') {
+        throw new Error('La solicitud a Firefly III superó el tiempo de espera.');
+      }
+      throw err;
+    }
   }
 
   // Firefly III devuelve 50 elementos por página; sin esto el modelo no veía

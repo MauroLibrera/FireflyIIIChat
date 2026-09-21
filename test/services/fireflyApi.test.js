@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFireflyApi } from '../../public/js/services/fireflyApi.js';
+import { createFireflyApi, FIREFLY_TIMEOUT_MS } from '../../public/js/services/fireflyApi.js';
 
 function pagedFetch({ totalPages, lastPageCount = 3, seen = [] }) {
   return async (url) => {
@@ -156,6 +156,75 @@ test('createTransaction sends the injected headers on the request', async () => 
   await api.createTransaction({ type: 'withdrawal', amount: 1, date: '2026-03-10', description: 'x', source_name: 'y', destination_name: 'z', tags: [] });
 
   assert.deepEqual(headers, { 'x-firefly-token': 'secret-token' });
+});
+
+test('FIREFLY_TIMEOUT_MS is exported and defaults to 15000', () => {
+  assert.equal(FIREFLY_TIMEOUT_MS, 15000);
+});
+
+test('every outbound request carries an AbortSignal', async () => {
+  let signal = null;
+  const api = createFireflyApi({
+    fetchImpl: async (_url, opts) => {
+      signal = opts.signal;
+      return { ok: true, status: 200, json: async () => ({ data: [], meta: { pagination: { total_pages: 1 } } }) };
+    },
+    getHeaders: () => ({})
+  });
+
+  await api.balances();
+
+  assert.ok(signal instanceof AbortSignal);
+});
+
+// No hay que esperar el timeout real: se espía la construcción de la señal
+// y se verifica con qué valor se llamó.
+test('a custom timeoutMs reaches the signal construction', async (t) => {
+  const original = AbortSignal.timeout;
+  let capturedMs = null;
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    capturedMs = ms;
+    return original(ms);
+  });
+
+  const api = createFireflyApi({
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data: [], meta: { pagination: { total_pages: 1 } } }) }),
+    getHeaders: () => ({}),
+    timeoutMs: 5
+  });
+
+  await api.balances();
+
+  assert.equal(capturedMs, 5);
+});
+
+test('an aborted request surfaces a timeout message instead of AbortError', async () => {
+  const abortError = new Error('The operation was aborted');
+  abortError.name = 'AbortError';
+
+  const api = createFireflyApi({
+    fetchImpl: async () => { throw abortError; },
+    getHeaders: () => ({})
+  });
+
+  await assert.rejects(() => api.balances(), (err) => {
+    assert.match(err.message, /tiempo de espera/);
+    assert.doesNotMatch(err.message, /AbortError/);
+    return true;
+  });
+});
+
+test('a normal successful call still succeeds with the timeout signal attached', async () => {
+  const api = createFireflyApi({
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ attributes: { name: 'Galicia', current_balance: '10', currency_symbol: '$' } }], meta: { pagination: { total_pages: 1 } } })
+    }),
+    getHeaders: () => ({})
+  });
+
+  assert.deepEqual(await api.balances(), [{ nombre: 'Galicia', saldo: 10, moneda: '$' }]);
 });
 
 test('recentTransactions flattens grouped entries', async () => {
