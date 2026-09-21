@@ -91,20 +91,45 @@ async function submitIntent(intent) {
   return chat.renderTransactionResult(intent, montos);
 }
 
+// Un único camino para "confirmar" y otro para "cancelar", sin importar si
+// llegaron por texto ("sí"/"no") o por los botones de la tarjeta: así no
+// pueden divergir con el tiempo y terminar haciendo cosas distintas frente
+// al mismo pedido del usuario.
+async function confirmPendingIntent() {
+  chat.addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
+  const resultado = await submitIntent(pendingIntent);
+  pendingIntent = null;
+  chat.addMessage(resultado, 'bot', true);
+}
+
+function cancelPendingIntent() {
+  pendingIntent = null;
+  chat.addMessage('🚫 Operación cancelada. Podés indicarme la corrección.', 'bot');
+}
+
+// Mismo manejo de errores para el envío por texto y para los clicks de la
+// tarjeta: sendMessage ya no es el único lugar que atrapa un fallo de red.
+async function runProtected(accion) {
+  sendBtn.disabled = true;
+  try {
+    await accion();
+  } catch (err) {
+    chat.addMessage(`❌ Error: ${err.message}`, 'bot error');
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
 async function processUserMessage(texto) {
   const accion = nextAction(pendingIntent, texto);
 
   if (accion === 'confirm') {
-    chat.addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
-    const resultado = await submitIntent(pendingIntent);
-    pendingIntent = null;
-    chat.addMessage(resultado, 'bot', true);
+    await confirmPendingIntent();
     return;
   }
 
   if (accion === 'cancel') {
-    pendingIntent = null;
-    chat.addMessage('🚫 Operación cancelada. Podés indicarme la corrección.', 'bot');
+    cancelPendingIntent();
     return;
   }
 
@@ -140,7 +165,17 @@ async function processUserMessage(texto) {
 
   if (intent.requiere_confirmacion) {
     pendingIntent = intent;
-    chat.addMessage(intent.mensaje_confirmacion, 'bot');
+
+    // Tarjeta estructurada (Task 2): el usuario confirma contra los campos
+    // reales que se van a enviar, no contra la frase que escribió el modelo
+    // sobre sí mismo (mensaje_confirmacion ya no se usa acá).
+    const montos = intent.type === 'query' ? [] : splitAmountIntoInstallments(intent.amount, intent.installments || 1);
+    const html = chat.renderConfirmationCard(intent, montos);
+
+    chat.addConfirmationCard(html, {
+      onConfirm: () => runProtected(confirmPendingIntent),
+      onCancel: () => runProtected(cancelPendingIntent)
+    });
     return;
   }
 
@@ -158,15 +193,8 @@ async function sendMessage() {
 
   chat.addMessage(texto, 'user');
   inputMessage.value = '';
-  sendBtn.disabled = true;
 
-  try {
-    await processUserMessage(texto);
-  } catch (err) {
-    chat.addMessage(`❌ Error: ${err.message}`, 'bot error');
-  } finally {
-    sendBtn.disabled = false;
-  }
+  await runProtected(() => processUserMessage(texto));
 }
 
 sendBtn.addEventListener('click', sendMessage);

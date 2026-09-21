@@ -47,3 +47,55 @@ export function renderTransactionResult(intent, montos) {
     ? `✅ Registradas <b>${numCuotas} cuotas</b> de $${montos[0]} en <i>${escapeHtml(intent.source_name)}</i> para "${escapeHtml(intent.description)}".${extraHtml}`
     : `✅ Registrado gasto de <b>$${escapeHtml(intent.amount)}</b> en <i>${escapeHtml(intent.source_name)}</i> para "${escapeHtml(intent.description)}".${extraHtml}`;
 }
+
+// Mapa de tipo a etiqueta legible. No hay un mapeo equivalente en el resto
+// del código (renderTransactionResult arma su frase entera por tipo en vez
+// de traducir el campo), así que se define acá.
+const ETIQUETAS_TIPO = {
+  withdrawal: 'Gasto',
+  deposit: 'Ingreso',
+  transfer: 'Transferencia',
+  query: 'Consulta'
+};
+
+// Arma una fila <div class="confirmation-row"> con su etiqueta, u omite la
+// fila entera si el valor está vacío: así nunca se imprime "undefined" para
+// un campo que el modelo no llenó (p. ej. category_name en una transferencia).
+function filaConfirmacion(etiqueta, valor) {
+  if (valor === undefined || valor === null || valor === '') return '';
+  return `<div class="confirmation-row"><span class="confirmation-label">${escapeHtml(etiqueta)}:</span> ${escapeHtml(valor)}</div>`;
+}
+
+// Tarjeta de confirmación estructurada (Task 2, R2): el usuario confirma
+// contra los campos reales que la app está por enviar a Firefly, no contra
+// una frase que escribió el modelo sobre sí mismo (mensaje_confirmacion).
+// `intent` ya pasó por validateIntent (Task 1): acá no se vuelve a validar.
+export function renderConfirmationCard(intent, montos) {
+  const tipoLegible = ETIQUETAS_TIPO[intent.type] || intent.type;
+  const numCuotas = montos.length;
+
+  const filaCuotas =
+    numCuotas > 1
+      ? filaConfirmacion('Cuotas', `${numCuotas} de $${montos[0]} c/u`)
+      : filaConfirmacion('Cuotas', String(intent.installments ?? numCuotas));
+
+  const filas = [
+    filaConfirmacion('Tipo', tipoLegible),
+    filaConfirmacion('Monto', intent.type === 'query' ? '' : formatCurrency(intent.amount)),
+    filaConfirmacion('Descripción', intent.description),
+    filaConfirmacion('Origen', intent.source_name),
+    filaConfirmacion('Destino', intent.destination_name),
+    filaConfirmacion('Categoría', intent.category_name),
+    filaConfirmacion('Fecha', intent.date),
+    filaCuotas
+  ].join('');
+
+  return `<div class="confirmation-card">
+    <div class="confirmation-card-title">🧾 Confirmá los datos antes de registrar</div>
+    ${filas}
+    <div class="confirmation-actions">
+      <button type="button" class="button-confirm confirmation-confirm-btn">✅ Confirmar</button>
+      <button type="button" class="button-cancel confirmation-cancel-btn">❌ Cancelar</button>
+    </div>
+  </div>`;
+}

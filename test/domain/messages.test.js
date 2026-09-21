@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBalances, renderBudgets, renderRecent, renderTransactionResult } from '../../public/js/domain/messages.js';
+import {
+  renderBalances,
+  renderBudgets,
+  renderRecent,
+  renderTransactionResult,
+  renderConfirmationCard
+} from '../../public/js/domain/messages.js';
 
 test('renderBalances shows the currency symbol and a two-decimal amount per account', () => {
   const html = renderBalances([
@@ -101,4 +107,192 @@ test('a hostile description or source_name is escaped, not injected as markup', 
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(html, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+});
+
+test('renderConfirmationCard shows every labelled field for a single-installment withdrawal', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 3000,
+      description: 'Super',
+      source_name: 'Galicia',
+      destination_name: 'Supermercado',
+      category_name: 'Comida',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['3000.00']
+  );
+
+  assert.match(html, /Galicia/);
+  assert.match(html, /Supermercado/);
+  assert.match(html, /Comida/);
+  assert.match(html, /2026-01-15/);
+  assert.match(html, /Super/);
+  assert.match(html, /3\.000,00/);
+  // Cada dato mostrado tiene que tener una etiqueta identificable al lado.
+  assert.match(html, /Tipo/);
+  assert.match(html, /Monto/);
+  assert.match(html, /Origen/);
+  assert.match(html, /Destino/);
+  assert.match(html, /Categor/);
+  assert.match(html, /Fecha/);
+  assert.match(html, /Cuotas/);
+});
+
+test('renderConfirmationCard omits the category row when category_name is empty and never prints undefined', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 3000,
+      description: 'Super',
+      source_name: 'Galicia',
+      destination_name: 'Supermercado',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['3000.00']
+  );
+
+  assert.doesNotMatch(html, /Categor/);
+  assert.doesNotMatch(html, /undefined/);
+});
+
+test('renderConfirmationCard shows the installment count and the per-installment amount', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 10000,
+      description: 'Notebook',
+      source_name: 'Visa',
+      destination_name: 'Tienda',
+      category_name: 'Tecnología',
+      date: '2026-01-15',
+      installments: 3
+    },
+    ['3333.34', '3333.33', '3333.33']
+  );
+
+  assert.match(html, /3/);
+  assert.match(html, /3333\.34/);
+});
+
+test('renderConfirmationCard escapes a hostile description instead of injecting markup', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 100,
+      description: '<img src=x onerror=alert(1)>',
+      source_name: 'Galicia',
+      destination_name: 'Comercio',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['100.00']
+  );
+
+  assert.doesNotMatch(html, /<img /);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
+test('renderConfirmationCard escapes an ampersand in source_name', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 100,
+      description: 'Compra',
+      source_name: 'Galicia & Cía',
+      destination_name: 'Comercio',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['100.00']
+  );
+
+  assert.match(html, /Galicia &amp; Cía/);
+});
+
+test('renderConfirmationCard shows both source and destination for a transfer', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'transfer',
+      amount: 5000,
+      description: '',
+      source_name: 'Galicia',
+      destination_name: 'Ahorros',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['5000.00']
+  );
+
+  assert.match(html, /Galicia/);
+  assert.match(html, /Ahorros/);
+});
+
+test('renderConfirmationCard omits the destination row when destination_name is empty', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'withdrawal',
+      amount: 100,
+      description: 'Compra',
+      source_name: 'Galicia',
+      destination_name: '',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['100.00']
+  );
+
+  assert.doesNotMatch(html, /Destino/);
+  assert.doesNotMatch(html, /undefined/);
+});
+
+test('renderConfirmationCard omits the description row when description is empty, without printing undefined', () => {
+  const html = renderConfirmationCard(
+    {
+      type: 'transfer',
+      amount: 5000,
+      description: '',
+      source_name: 'Galicia',
+      destination_name: 'Ahorros',
+      category_name: '',
+      date: '2026-01-15',
+      installments: 1
+    },
+    ['5000.00']
+  );
+
+  assert.doesNotMatch(html, /undefined/);
+});
+
+test('renderConfirmationCard labels a deposit and a withdrawal in Spanish, not the raw type string', () => {
+  const withdrawal = renderConfirmationCard(
+    { type: 'withdrawal', amount: 100, description: '', source_name: 'Galicia', destination_name: 'Comercio', category_name: '', date: '2026-01-15', installments: 1 },
+    ['100.00']
+  );
+  const deposit = renderConfirmationCard(
+    { type: 'deposit', amount: 100, description: '', source_name: 'Sueldo', destination_name: 'Galicia', category_name: '', date: '2026-01-15', installments: 1 },
+    ['100.00']
+  );
+
+  assert.doesNotMatch(withdrawal, />withdrawal</);
+  assert.doesNotMatch(deposit, />deposit</);
+});
+
+test('renderConfirmationCard includes distinguishable confirm and cancel controls for ui/chat.js to wire up', () => {
+  const html = renderConfirmationCard(
+    { type: 'withdrawal', amount: 100, description: '', source_name: 'Galicia', destination_name: 'Comercio', category_name: '', date: '2026-01-15', installments: 1 },
+    ['100.00']
+  );
+
+  assert.match(html, /confirmation-confirm-btn/);
+  assert.match(html, /confirmation-cancel-btn/);
+  // Nada de estilos inline: la CSP de la Task 7 los prohíbe.
+  assert.doesNotMatch(html, /style=/);
 });
