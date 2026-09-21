@@ -16,7 +16,7 @@ Diseñada para desplegarse mediante **Docker** y servida de forma segura dentro 
   - Estado de ejecución de presupuestos.
   - Historial de los últimos movimientos reales (descartando transacciones futuras).
 - **Manejo de Fechas Relativas:** Calculadas dinámicamente según la zona horaria del usuario (`UTC-3`).
-- **Seguridad Garantizada:** Servidor proxy intermedio en Node.js para evitar la exposición de tokens personales de Firefly III o API Keys de Groq en el cliente web.
+- **Proxy intermedio en Node.js:** el navegador nunca habla directamente con Firefly III ni con Groq. Desde que existen los perfiles múltiples, las credenciales de cada perfil se guardan en el `localStorage` del navegador y viajan al proxy como cabeceras de la petición; el proxy no las expone a terceros, pero tampoco son secretas frente a quien tenga acceso al navegador. Definí `FIREFLY_ALLOWED_HOSTS` para limitar a qué hosts puede conectarse el proxy.
 
 ---
 
@@ -94,6 +94,17 @@ FIREFLY_TOKEN=tu_personal_access_token_de_firefly
 
 # API Key de Groq
 GROQ_API_KEY=gsk_tu_groq_api_key
+
+# OBLIGATORIO. Hosts a los que el proxy tiene permitido conectarse, separados
+# por coma. Si queda vacío, el proxy acepta el host que le indique cualquier
+# cliente en la cabecera x-firefly-url y le devuelve la respuesta, lo que
+# permite sondear cualquier máquina que el contenedor alcance, incluida la red
+# interna de Docker.
+#
+# Dos detalles que hacen fallar la coincidencia en silencio:
+#   - incluí el puerto: "app" no coincide con "app:8080"
+#   - para IPv6 usá corchetes: "[::1]:3000"
+FIREFLY_ALLOWED_HOSTS=app:8080
 
 # Puerto del servidor Proxy
 PORT=3000
