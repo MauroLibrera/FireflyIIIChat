@@ -91,11 +91,14 @@ export function validateIntent(raw, context) {
   }
 
   if (intent.installments !== undefined && intent.installments !== null) {
-    // A diferencia de "amount", una cadena numérica NO se coerciona acá: el
-    // contrato de coerción es específico para el monto (ver Task 1 brief).
-    if (typeof intent.installments !== 'number' || !Number.isInteger(intent.installments) || intent.installments < 1) {
+    // Mismo criterio que "amount": una cadena numérica se coerciona, no se
+    // rechaza. La corrección de la ronda 1 hizo explícito que el brief
+    // original diferenciaba installments de amount sin motivo real.
+    const cuotas = Number(intent.installments);
+    if (!Number.isInteger(cuotas) || cuotas < 1) {
       return rechazar(`La cantidad de cuotas "${raw.installments}" no es válida.`, 'installments');
     }
+    intent.installments = cuotas;
   } else {
     intent.installments = 1;
   }
@@ -108,6 +111,19 @@ export function validateIntent(raw, context) {
   if (intent.type === 'deposit') {
     const error = validarCuenta(context.assetAccounts || [], intent.destination_name, 'destination_name');
     if (error) return error;
+  }
+
+  if (intent.type === 'transfer') {
+    // "Movimiento entre dos cuentas de activo propias" (prompt.js): un
+    // transfer mueve plata entre DOS cuentas sincronizadas, así que ambas
+    // puntas se validan igual que source_name/destination_name en
+    // withdrawal/deposit. Se reporta el primer campo que falla.
+    const cuentas = context.assetAccounts || [];
+    const errorOrigen = validarCuenta(cuentas, intent.source_name, 'source_name');
+    if (errorOrigen) return errorOrigen;
+
+    const errorDestino = validarCuenta(cuentas, intent.destination_name, 'destination_name');
+    if (errorDestino) return errorDestino;
   }
 
   return { ok: true, intent };

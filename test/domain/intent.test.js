@@ -133,8 +133,32 @@ test('a negative installments count is rejected', () => {
   assert.equal(result.field, 'installments');
 });
 
-test('a stringified installments count is rejected, unlike amount it is not coerced', () => {
+test('a stringified installments count is coerced, same as amount', () => {
   const result = validateIntent({ type: 'query', installments: '3' }, CONTEXT);
+  assert.equal(result.ok, true);
+  assert.equal(result.intent.installments, 3);
+});
+
+test('a fractional installments string is rejected even after coercion', () => {
+  const result = validateIntent({ type: 'query', installments: '3.5' }, CONTEXT);
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'installments');
+});
+
+test('a zero installments string is rejected even after coercion', () => {
+  const result = validateIntent({ type: 'query', installments: '0' }, CONTEXT);
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'installments');
+});
+
+test('a negative installments string is rejected even after coercion', () => {
+  const result = validateIntent({ type: 'query', installments: '-1' }, CONTEXT);
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'installments');
+});
+
+test('a non-numeric installments string is rejected', () => {
+  const result = validateIntent({ type: 'query', installments: 'abc' }, CONTEXT);
   assert.equal(result.ok, false);
   assert.equal(result.field, 'installments');
 });
@@ -192,6 +216,78 @@ test('a deposit to a synced account matches case-insensitively', () => {
   const result = validateIntent(
     { type: 'deposit', amount: 100, destination_name: 'GALICIA' },
     CONTEXT
+  );
+  assert.equal(result.ok, true);
+});
+
+const TRANSFER_CONTEXT = { ...CONTEXT, assetAccounts: ['Galicia', 'Mercado Pago'] };
+
+test('a transfer between two synced accounts is accepted', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Galicia', destination_name: 'Mercado Pago' },
+    TRANSFER_CONTEXT
+  );
+  assert.equal(result.ok, true);
+});
+
+test('a transfer with an unknown source_name is rejected', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Cuenta Inexistente', destination_name: 'Mercado Pago' },
+    TRANSFER_CONTEXT
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'source_name');
+});
+
+test('a transfer with an unknown destination_name is rejected', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Galicia', destination_name: 'Cuenta Inexistente' },
+    TRANSFER_CONTEXT
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'destination_name');
+});
+
+test('a transfer with both accounts unknown reports the first failing field', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Cuenta Inexistente', destination_name: 'Otra Inexistente' },
+    TRANSFER_CONTEXT
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'source_name');
+});
+
+test('a transfer near-miss on source_name gets the same suggestion as a withdrawal', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Galiciaa', destination_name: 'Mercado Pago' },
+    TRANSFER_CONTEXT
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'source_name');
+  assert.match(result.reason, /Galicia/);
+});
+
+test('a transfer near-miss on destination_name gets the same suggestion as a deposit', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Galicia', destination_name: 'Mercado Pagoo' },
+    TRANSFER_CONTEXT
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.field, 'destination_name');
+  assert.match(result.reason, /Mercado Pago/);
+});
+
+// Decisión explícita, no un olvido: un transfer de una cuenta a sí misma NO
+// se rechaza acá. Esta tarea (R1) guarda contra alucinaciones — una cuenta
+// inventada que no existe entre las sincronizadas — no contra reglas de
+// negocio sobre transferencias legítimas entre cuentas reales. Firefly ya
+// devuelve su propio error si no acepta origen == destino; inventar esa
+// regla acá excede el alcance de "validar que el modelo no alucinó una
+// cuenta".
+test('a transfer from an account to itself is accepted: same-account transfers are out of this validator scope', () => {
+  const result = validateIntent(
+    { type: 'transfer', amount: 100, source_name: 'Galicia', destination_name: 'Galicia' },
+    TRANSFER_CONTEXT
   );
   assert.equal(result.ok, true);
 });
