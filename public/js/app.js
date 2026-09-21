@@ -259,3 +259,15 @@ inputMessage.addEventListener('keypress', (e) => {
 });
 
 loadReferenceData();
+
+// Instala el service worker que precachea el app shell (Task 5). Registrado
+// como módulo ES para que sw.js pueda importar shouldCache/APP_SHELL desde
+// domain/cacheRules.js en vez de duplicar ahí adentro la regla de /api/.
+// Guardado por feature-detection: en un navegador viejo sin soporte
+// simplemente no hay worker, y la página sigue funcionando igual sin él. Un
+// registro fallido (red, scope, etc.) tampoco debe romper la carga.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { type: 'module' }).catch((err) => {
+    console.error('No se pudo registrar el service worker:', err);
+  });
+}
