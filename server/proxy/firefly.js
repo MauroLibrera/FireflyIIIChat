@@ -43,6 +43,8 @@ export function createFireflyHandler({ env = process.env, fetchImpl = fetch } = 
 
       const response = await fetchImpl(targetUrl, fetchOptions);
 
+      // El await es deliberado: sin él, un rechazo de la lectura del cuerpo
+      // escapa de este try/catch y se vuelve un unhandled rejection que tumba el proceso.
       return await forwardResponse(res, response, 'Firefly III');
     } catch (err) {
       console.error('Error en Proxy Firefly:', err);

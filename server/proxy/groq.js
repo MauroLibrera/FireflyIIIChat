@@ -22,6 +22,8 @@ export function createGroqHandler({ env = process.env, fetchImpl = fetch } = {})
         body: JSON.stringify(req.body)
       });
 
+      // El await es deliberado: sin él, un rechazo de la lectura del cuerpo
+      // escapa de este try/catch y se vuelve un unhandled rejection que tumba el proceso.
       return await forwardResponse(res, response, 'Groq');
     } catch (err) {
       console.error('Error en Proxy Groq:', err);

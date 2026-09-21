@@ -21,6 +21,14 @@ before(async () => {
       res.writeHead(204);
       return res.end();
     }
+    if (upstreamMode === 'truncated') {
+      // Declara un Content-Length que nunca cumple y corta la conexión a
+      // mitad del cuerpo: fuerza a que la lectura del body falle después de
+      // que los headers ya llegaron, en vez de que falle el fetch en sí.
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '100' });
+      res.write('{"partial": tr');
+      return setTimeout(() => res.destroy(), 50);
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ received_url: req.url }));
   });
@@ -126,6 +134,12 @@ test('turns a non-JSON upstream body into a 502 with an excerpt', async () => {
   const body = await res.json();
   assert.equal(body.upstreamStatus, 502);
   assert.match(body.body, /nginx 502/);
+});
+
+test('contains a mid-body upstream disconnect as a 500 instead of crashing the process', async () => {
+  upstreamMode = 'truncated';
+  const res = await fetch(`${baseUrl}/api/firefly/accounts`, { headers: headers() });
+  assert.equal(res.status, 500);
 });
 
 test('passes a 204 through without a body', async () => {
