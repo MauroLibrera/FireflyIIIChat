@@ -6,6 +6,7 @@ import { buildSystemPrompt, buildMessages } from './domain/prompt.js';
 import { splitAmountIntoInstallments } from './domain/installments.js';
 import { createSubmitGuard } from './domain/submitGuard.js';
 import { createProfileStore } from './services/profileStore.js';
+import { createChatHistory } from './services/chatHistory.js';
 import { createFireflyApi } from './services/fireflyApi.js';
 import { createGroqApi } from './services/groqApi.js';
 import { createChatView } from './ui/chat.js';
@@ -22,8 +23,20 @@ const chat = createChatView({
   statusElement: document.getElementById('status-text')
 });
 
+// Task 6: persiste la transcripción para que sobreviva a un reload. ui/chat.js
+// no sabe nada de storage (regla de capas: eso lo convertiría en un
+// services/ disfrazado); acá se envuelve addMessage para que cada llamado
+// tanto renderice como quede grabado.
+const chatHistory = createChatHistory({ storage: window.localStorage });
+
+function addMessage(texto, tipo = 'bot', esHtml = false) {
+  chatHistory.append({ texto, tipo, esHtml });
+  return chat.addMessage(texto, tipo, esHtml);
+}
+
 const inputMessage = document.getElementById('inputMessage');
 const sendBtn = document.getElementById('sendBtn');
+const clearHistoryBtn = document.getElementById('btn-clear-history');
 
 let reference = { assetAccounts: [], revenueAccounts: [], tags: [], categories: [] };
 let defaultAssetAccount = '';
@@ -55,7 +68,7 @@ async function loadReferenceData() {
     // Sin URL ni token el fallo es esperable: guiar en vez de mostrar un error
     if (!modal.isConfigured()) {
       chat.setStatus('Configurá tu Firefly III para empezar', '#facc15');
-      chat.addMessage('Todavía no hay un perfil configurado. Abrí ⚙️ y cargá la URL y el token de Firefly III.', 'bot');
+      addMessage('Todavía no hay un perfil configurado. Abrí ⚙️ y cargá la URL y el token de Firefly III.', 'bot');
       modal.open();
       return;
     }
@@ -116,7 +129,7 @@ function offerPendingIntentCard() {
 }
 
 function showError(err) {
-  chat.addMessage(`❌ Error: ${err.message}`, 'bot error');
+  addMessage(`❌ Error: ${err.message}`, 'bot error');
 }
 
 // Un único camino para "confirmar" y otro para "cancelar", sin importar si
@@ -130,11 +143,11 @@ async function confirmPendingIntent() {
   // deja que termine el que ya está en curso.
   if (!submitGuard.tryStart()) return;
 
-  chat.addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
+  addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
   try {
     const resultado = await submitIntent(pendingIntent);
     pendingIntent = null;
-    chat.addMessage(resultado, 'bot', true);
+    addMessage(resultado, 'bot', true);
   } catch (err) {
     // R4: pendingIntent no se limpia acá porque el await de arriba falló
     // antes de esa línea, así que la intención ya validada sobrevive al
@@ -146,7 +159,7 @@ async function confirmPendingIntent() {
     // a ciegas puede duplicar la transacción. Un aviso honesto es lo único
     // que se puede hacer en esta capa.
     showError(err);
-    chat.addMessage('⚠️ Si el envío anterior llegó a procesarse en Firefly III, reintentar lo va a duplicar. Revisá tus últimas transacciones antes de confirmar de nuevo.', 'bot');
+    addMessage('⚠️ Si el envío anterior llegó a procesarse en Firefly III, reintentar lo va a duplicar. Revisá tus últimas transacciones antes de confirmar de nuevo.', 'bot');
     offerPendingIntentCard();
   } finally {
     submitGuard.finish();
@@ -155,7 +168,7 @@ async function confirmPendingIntent() {
 
 function cancelPendingIntent() {
   pendingIntent = null;
-  chat.addMessage('🚫 Operación cancelada. Podés indicarme la corrección.', 'bot');
+  addMessage('🚫 Operación cancelada. Podés indicarme la corrección.', 'bot');
 }
 
 // Mismo manejo de errores para el envío por texto y para los clicks de la
@@ -211,7 +224,7 @@ async function processUserMessage(texto) {
   });
 
   if (!validado.ok) {
-    chat.addMessage(validado.reason, 'bot error');
+    addMessage(validado.reason, 'bot error');
     return;
   }
 
@@ -228,7 +241,7 @@ async function processUserMessage(texto) {
   }
 
   if (intent.type === 'query') {
-    chat.addMessage(await handleQuery(intent), 'bot', true);
+    addMessage(await handleQuery(intent), 'bot', true);
     return;
   }
 
@@ -243,7 +256,7 @@ async function sendMessage() {
   const texto = inputMessage.value.trim();
   if (!texto) return;
 
-  chat.addMessage(texto, 'user');
+  addMessage(texto, 'user');
   inputMessage.value = '';
 
   await runProtected(() => processUserMessage(texto));
@@ -258,6 +271,26 @@ inputMessage.addEventListener('keypress', (e) => {
   if (e.key === 'Enter' && !sendBtn.disabled) sendMessage();
 });
 
+// Task 6: restaura la transcripción guardada antes de sincronizar con
+// Firefly, reemplazando el saludo estático de index.html si había algo
+// guardado. Se usa chat.addMessage (no el wrapper de más arriba) para no
+// volver a grabar en el storage lo que ya estaba ahí.
+function restoreChatHistory() {
+  const entradas = chatHistory.read();
+  if (entradas.length === 0) return;
+
+  chat.clear();
+  for (const { texto, tipo, esHtml } of entradas) {
+    chat.addMessage(texto, tipo, esHtml);
+  }
+}
+
+clearHistoryBtn.addEventListener('click', () => {
+  chatHistory.clear();
+  chat.clear();
+});
+
+restoreChatHistory();
 loadReferenceData();
 
 // Instala el service worker que precachea el app shell (Task 5). Registrado

@@ -50,6 +50,13 @@ export function createChatView({ chatElement, statusElement }) {
     return msg;
   }
 
+  // Vacía el DOM del chat. Operación puramente visual: no sabe nada de
+  // storage, el que decide si también hay que borrar algo persistido es
+  // quien la llama (app.js).
+  function clear() {
+    chatElement.innerHTML = '';
+  }
+
   function setStatus(texto, color) {
     statusElement.innerText = texto;
     statusElement.style.color = color;
@@ -72,6 +79,7 @@ export function createChatView({ chatElement, statusElement }) {
   return {
     addMessage,
     addConfirmationCard,
+    clear,
     setStatus,
     history,
     renderBalances,
