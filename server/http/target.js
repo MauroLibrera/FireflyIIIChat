@@ -33,11 +33,25 @@ export function resolveFireflyBase(rawUrl, allowedHosts = []) {
 }
 
 // El endpoint lo elige el cliente y no puede salirse del prefijo /api/v1/.
-// fetch normaliza los segmentos ".." antes de enviar, y %2e cuenta como punto.
-export function isSafeEndpoint(endpoint) {
-  const segmentos = String(endpoint)
-    .split('/')
-    .map((seg) => seg.toLowerCase().split('%2e').join('.'));
+// En vez de parchear el string a mano (eso es lo que dejaba pasar "..%5c..%5c"
+// como un solo segmento "seguro"), le hacemos la misma pregunta que fetch: le
+// pedimos a la propia URL de WHATWG que resuelva el endpoint contra el prefijo
+// y comprobamos que el resultado siga en el mismo origen y bajo ese prefijo.
+// Eso cierra de una sola vez las barras invertidas, los "..", y cualquier
+// variante de encoding, porque es el mismo parser el que decide.
+export function buildFireflyTargetUrl(baseUrl, endpoint, queryString = '') {
+  let prefix;
+  let target;
+  try {
+    prefix = new URL(`${baseUrl}/api/v1/`);
+    target = new URL(`${endpoint}${queryString}`, prefix);
+  } catch {
+    return { error: 'Endpoint de Firefly III inválido.' };
+  }
 
-  return !segmentos.some((seg) => seg === '..' || seg === '.');
+  if (target.origin !== prefix.origin || !target.pathname.startsWith(prefix.pathname)) {
+    return { error: 'Endpoint de Firefly III inválido.' };
+  }
+
+  return { url: target.toString() };
 }

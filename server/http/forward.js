@@ -11,8 +11,14 @@ export async function forwardResponse(res, response, origen) {
     return res.status(response.status).end();
   }
 
+  // El parseo va adentro del try; el send va afuera. Si el try también
+  // envolviera el send y este llegara a tirar (headers ya mandados), el
+  // catch intentaría mandar una segunda respuesta, que tira de nuevo y se
+  // escapa como un unhandled rejection: el mismo crash que el await de los
+  // handlers existe para evitar, pero por otra puerta.
+  let parsed;
   try {
-    return res.status(response.status).json(JSON.parse(raw));
+    parsed = JSON.parse(raw);
   } catch {
     return res.status(502).json({
       error: `${origen} devolvió una respuesta que no es JSON.`,
@@ -20,4 +26,6 @@ export async function forwardResponse(res, response, origen) {
       body: raw.slice(0, 300)
     });
   }
+
+  return res.status(response.status).json(parsed);
 }
