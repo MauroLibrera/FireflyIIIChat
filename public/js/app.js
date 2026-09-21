@@ -1,6 +1,7 @@
 import { toIsoDate } from './domain/format.js';
 import { activeProfile, authHeaders } from './domain/profiles.js';
 import { nextAction } from './domain/confirmation.js';
+import { validateIntent } from './domain/intent.js';
 import { buildSystemPrompt, buildMessages } from './domain/prompt.js';
 import { splitAmountIntoInstallments } from './domain/installments.js';
 import { createProfileStore } from './services/profileStore.js';
@@ -116,9 +117,26 @@ async function processUserMessage(texto) {
     defaultAssetAccount
   });
 
-  const intent = await groq.interpret({
+  const raw = await groq.interpret({
     messages: buildMessages({ systemPrompt, history: chat.history(4), userText: texto })
   });
+
+  // El modelo garantiza JSON bien formado, no que describa algo real: una
+  // cuenta inventada o una fecha imposible se frenan acá, antes de tocar
+  // Firefly, en vez de volver como un 422 que el usuario no puede interpretar.
+  const validado = validateIntent(raw, {
+    assetAccounts: reference.assetAccounts,
+    revenueAccounts: reference.revenueAccounts,
+    categories: reference.categories,
+    today: toIsoDate(new Date())
+  });
+
+  if (!validado.ok) {
+    chat.addMessage(validado.reason, 'bot error');
+    return;
+  }
+
+  const intent = validado.intent;
 
   if (intent.requiere_confirmacion) {
     pendingIntent = intent;
