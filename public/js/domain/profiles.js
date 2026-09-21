@@ -12,8 +12,16 @@ export function initialProfilesState() {
 
 // Un valor corrompido no puede dejar la app inusable.
 export function normalizeProfilesState(raw) {
+  // Array.isArray importa: un array es typeof "object" y tiene claves, así que
+  // { profiles: ["a","b"] } pasaría el chequeo y rompería el contrato Record.
   const esValido =
-    raw && typeof raw === 'object' && raw.profiles && typeof raw.profiles === 'object' && Object.keys(raw.profiles).length > 0;
+    raw &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    raw.profiles &&
+    typeof raw.profiles === 'object' &&
+    !Array.isArray(raw.profiles) &&
+    Object.keys(raw.profiles).length > 0;
 
   if (!esValido) return initialProfilesState();
 

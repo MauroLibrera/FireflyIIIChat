@@ -33,6 +33,12 @@ test('normalize falls back for unusable input', () => {
   }
 });
 
+test('normalize rejects an array masquerading as a profiles record', () => {
+  assert.equal(normalizeProfilesState({ profiles: ['a', 'b'] }).activeProfileId, 'default');
+  assert.equal(Array.isArray(normalizeProfilesState({ profiles: ['a', 'b'] }).profiles), false);
+  assert.equal(normalizeProfilesState(['a', 'b']).activeProfileId, 'default');
+});
+
 test('activeProfile returns the selected profile', () => {
   const state = { activeProfileId: 'p1', profiles: { p1: { name: 'Trabajo' } } };
   assert.equal(activeProfile(state).name, 'Trabajo');
@@ -55,7 +61,9 @@ test('upsertProfile replaces an existing profile', () => {
 
 test('removeProfile keeps at least one profile', () => {
   const state = initialProfilesState();
-  assert.deepEqual(removeProfile(state, 'default'), state);
+  // assert.equal, not deepEqual: this pins reference identity, so a future
+  // refactor that starts cloning on this branch fails instead of passing.
+  assert.equal(removeProfile(state, 'default'), state);
 });
 
 test('removeProfile activates a survivor', () => {
