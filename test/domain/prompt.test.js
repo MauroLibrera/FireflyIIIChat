@@ -33,6 +33,14 @@ test('the prompt states the confirmation rule exactly once', () => {
   assert.equal(prompt.includes('REGLAS DE CONFIRMACIÓN:'), false);
 });
 
+test('the prompt keeps its worked confirmation example', () => {
+  // A few-shot example steers the model's output format. It was dropped once
+  // while moving this prompt and nothing caught it, so pin it.
+  const prompt = buildSystemPrompt(context);
+  assert.match(prompt, /pidiendo validación\. Ejemplo:/);
+  assert.match(prompt, /¿Confirmás el gasto de \$15\.000 en 'Supermercado'/);
+});
+
 test('buildMessages places history between the system prompt and the user text', () => {
   const messages = buildMessages({
     systemPrompt: 'SYS',

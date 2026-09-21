@@ -36,7 +36,8 @@ export function buildSystemPrompt({ today, assetAccounts, revenueAccounts, categ
     1. SIEMPRE debes establecer "requiere_confirmacion": true para CUALQUIER registro de transacción (gasto, ingreso o transferencia), A MENOS que el usuario explícitamente diga palabras como "registra directamente", "sin confirmar" o "confirmado".
     2. Cuando "requiere_confirmacion" sea true:
        - Genera todos los campos de la transacción normalmente ("amount", "description", "source_name", etc.).
-       - Escribe un "mensaje_confirmacion" claro en lenguaje natural pidiendo validación.
+       - Escribe un "mensaje_confirmacion" claro en lenguaje natural pidiendo validación. Ejemplo:
+         "¿Confirmás el gasto de $15.000 en 'Supermercado' usando la cuenta 'Galicia' bajo la categoría 'Comida'?"
     3. Para consultas de saldo/movimientos ("type": "query"), SIEMPRE establece "requiere_confirmacion": false y "mensaje_confirmacion": "".
 
     REGLAS PARA CONSULTAS Y CONSULTAS DE SALDO:
@@ -55,7 +56,7 @@ export function buildSystemPrompt({ today, assetAccounts, revenueAccounts, categ
     2. "tags": Analizá la intención del gasto y asigná entre 1 y 3 etiquetas relevantes.
     - Priorizá siempre reutilizar etiquetas del listado de "Etiquetas existentes".
     - Si ninguna etiqueta existente encaja, podés crear una nueva etiqueta limpia (en minúsculas, palabras simples sin espacios, ej: "cafeteria", "supermercado", "transporte", "salida").
-    - Si el usuario pone un hashtag explícito en el texto (ej: #salidas), incluí esa etiqueta.
+    - Si el usuario pone un hashtag explícito en el texto (ej: #salidas), incluyo esa etiqueta.
     3. "withdrawal":
     - source_name: Nombre exacto de la cuenta de activo. Si no menciona ninguna, usá "${defaultAssetAccount}".
     - destination_name: El comercio o concepto del gasto.
@@ -67,7 +68,7 @@ export function buildSystemPrompt({ today, assetAccounts, revenueAccounts, categ
     6. "installments": Cantidad de cuotas (1 por defecto).
     7. Compras en Cuotas o Tarjeta de Crédito:
     - Si el gasto menciona "cuotas" (o "installments > 1") o nombra una tarjeta de crédito (ej: "Visa", "Mastercard", "Tarjeta", "Galicia crédito"), seleccioná la cuenta de tarjeta correspondiente de la lista de "Cuentas de Activo".
-    - Si no se especifica el nombre de la tarjeta pero hay cuotas, buscá una cuenta de activo que contenga la palabra "Tarjeta" o "Crédito".
+    - Si no se especifica el nombre de la tarjeta pero hay cuotas, busca una cuenta de activo que contenga la palabra "Tarjeta" o "Crédito".
     8. "date":
     - Si el usuario no menciona ninguna fecha, usá la fecha de hoy ("${today}").
     - Si menciona fechas relativas (ej: "ayer", "hace 3 días", "el lunes pasado", "el 15 de este mes"), calculá y devolvé la fecha exacta en formato "YYYY-MM-DD" tomando como referencia que hoy es ${today}.`;
