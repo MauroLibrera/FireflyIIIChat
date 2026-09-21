@@ -566,7 +566,7 @@ Create `test/domain/format.test.js`:
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { escapeHtml, formatCurrency, toIsoDate } from '../../public/js/domain/format.js';
+import { escapeHtml, formatCurrency, formatNumber, toIsoDate } from '../../public/js/domain/format.js';
 
 test('escapeHtml neutralises markup', () => {
   assert.equal(escapeHtml('<script>alert(1)</script>'), '&lt;script&gt;alert(1)&lt;/script&gt;');
@@ -585,9 +585,17 @@ test('escapeHtml treats null and undefined as empty', () => {
   assert.equal(escapeHtml(0), '0');
 });
 
-test('formatCurrency uses the Argentine grouping with two decimals', () => {
+test('formatCurrency uses the Argentine grouping with at least two decimals', () => {
   assert.equal(formatCurrency(1234.5), '1.234,50');
   assert.equal(formatCurrency(0), '0,00');
+});
+
+test('formatNumber forces no decimals, matching the budget screen', () => {
+  // Budgets rendered with no fraction options originally. Forcing two decimals
+  // here turns "$15.000" into "$15.000,00" on a screen the user reads daily.
+  assert.equal(formatNumber(15000), '15.000');
+  assert.equal(formatNumber(0), '0');
+  assert.equal(formatNumber(1234.5), '1.234,5');
 });
 
 test('toIsoDate formats without a UTC shift', () => {
@@ -669,8 +677,16 @@ export function escapeHtml(valor) {
   return REEMPLAZOS.reduce((texto, [buscar, reemplazo]) => texto.split(buscar).join(reemplazo), String(valor));
 }
 
+// El original usaba DOS formatos distintos y hay que conservar los dos:
+// saldos y movimientos fuerzan un mínimo de dos decimales, los presupuestos
+// no fuerzan ninguno. Unificarlos cambia "$15.000" por "$15.000,00" en
+// pantalla, que es un cambio de comportamiento visible.
 export function formatCurrency(valor, locale = 'es-AR') {
-  return Number(valor).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return Number(valor).toLocaleString(locale, { minimumFractionDigits: 2 });
+}
+
+export function formatNumber(valor, locale = 'es-AR') {
+  return Number(valor).toLocaleString(locale);
 }
 
 // "sv-SE" devuelve el formato ISO AAAA-MM-DD en hora local, sin desfase UTC.
@@ -1691,6 +1707,12 @@ This is the task that deletes the inline script. It changes no behavior; every b
 **Interfaces:**
 - Consumes: everything produced by Tasks 2–5.
 - Produces: no test-facing interface. `ui/` and `app.js` are not imported by tests.
+
+**Correction applied after review:** the four render functions originally placed in
+`ui/chat.js` are pure string builders with loops and branching. Leaving them there
+contradicted this plan's own justification for not testing `ui/` — that it holds no
+logic. They move to `public/js/domain/messages.js`, which is pure and tested, and
+`ui/chat.js` keeps only DOM work: appending a message, setting status, reading history.
 
 **Two traps to respect:**
 1. **Module scripts are deferred.** `app.js` runs after the document is parsed, so every `onclick="foo()"` attribute in the markup breaks — those functions are no longer globals. Each one becomes an `addEventListener` registered in `app.js`, keyed by `id`.
