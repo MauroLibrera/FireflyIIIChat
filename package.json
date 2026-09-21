@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "description": "Proxy y Chat para Firefly III y Groq",
   "main": "server.js",
+  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -13,3 +13,7 @@ yarn-error.log*
 .DS_Store
 .vscode/
 .idea/
+
+# Herramientas de asistentes de código
+.atl/
+.serena/

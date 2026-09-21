@@ -1,0 +1,13 @@
+# El COPY . . del Dockerfile ignora .gitignore por completo. Sin este
+# archivo, .env.local (PAT real de Firefly y clave de Groq), .git y el
+# árbol de test/docs/scratch terminan horneados dentro de la imagen.
+.git
+.env
+.env.*
+!.env.example
+node_modules
+test
+docs
+.superpowers
+.atl
+.serena

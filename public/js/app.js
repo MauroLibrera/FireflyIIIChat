@@ -1,0 +1,365 @@
+import { toIsoDate } from './domain/format.js';
+import { activeProfile, authHeaders } from './domain/profiles.js';
+import { nextAction } from './domain/confirmation.js';
+import { validateIntent, resolveIntentRoute } from './domain/intent.js';
+import { canConfirmPendingIntent } from './domain/pendingIntentGuard.js';
+import { buildSystemPrompt, buildMessages } from './domain/prompt.js';
+import { splitAmountIntoInstallments } from './domain/installments.js';
+import { createSubmitGuard } from './domain/submitGuard.js';
+import { createProfileStore } from './services/profileStore.js';
+import { createChatHistory } from './services/chatHistory.js';
+import { createFireflyApi } from './services/fireflyApi.js';
+import { createGroqApi } from './services/groqApi.js';
+import { createChatView } from './ui/chat.js';
+import { createConfigModal } from './ui/configModal.js';
+
+const store = createProfileStore({ storage: window.localStorage });
+const getHeaders = () => authHeaders(activeProfile(store.read()));
+
+const firefly = createFireflyApi({ getHeaders });
+const groq = createGroqApi({ getHeaders });
+
+const chat = createChatView({
+  chatElement: document.getElementById('chat'),
+  statusElement: document.getElementById('status-text')
+});
+
+// Task 6: persiste la transcripción para que sobreviva a un reload. ui/chat.js
+// no sabe nada de storage (regla de capas: eso lo convertiría en un
+// services/ disfrazado); acá se envuelve addMessage para que cada llamado
+// tanto renderice como quede grabado.
+const chatHistory = createChatHistory({ storage: window.localStorage });
+
+function addMessage(texto, tipo = 'bot', esHtml = false) {
+  chatHistory.append({ texto, tipo, esHtml });
+  return chat.addMessage(texto, tipo, esHtml);
+}
+
+const inputMessage = document.getElementById('inputMessage');
+const sendBtn = document.getElementById('sendBtn');
+const clearHistoryBtn = document.getElementById('btn-clear-history');
+
+let reference = { assetAccounts: [], revenueAccounts: [], tags: [], categories: [] };
+let defaultAssetAccount = '';
+let pendingIntent = null;
+
+// Fix round 1 (Finding 2): el reintento de R4 dejó pendingIntent puesto
+// mientras el POST a Firefly sigue en vuelo, y domain/confirmation.js trata
+// "ok"/"dale"/"ya" como afirmativas. Sin este guard, escribir eso y apretar
+// Enter durante ese envío dispara un segundo confirmPendingIntent() para la
+// misma intención. sendBtn.disabled ya frena la UI, pero este guard es la
+// defensa que no depende de que ningún otro punto de entrada futuro respete
+// ese disabled.
+const submitGuard = createSubmitGuard();
+
+const modal = createConfigModal({ store, onSaved: loadReferenceData });
+
+async function loadReferenceData() {
+  try {
+    reference = await firefly.loadReferenceData();
+    defaultAssetAccount = reference.assetAccounts[0] || '';
+
+    chat.setStatus(
+      `Sincronizado (${reference.assetAccounts.length} cuentas / ${reference.categories.length} cat / ${reference.tags.length} tags)`,
+      '#4ade80'
+    );
+  } catch (err) {
+    console.error(err);
+
+    // Sin URL ni token el fallo es esperable: guiar en vez de mostrar un error
+    if (!modal.isConfigured()) {
+      chat.setStatus('Configurá tu Firefly III para empezar', '#facc15');
+      addMessage('Todavía no hay un perfil configurado. Abrí ⚙️ y cargá la URL y el token de Firefly III.', 'bot');
+      modal.open();
+      return;
+    }
+
+    chat.setStatus('❌ Error al sincronizar datos.', '#f87171');
+  }
+}
+
+async function handleQuery(intent) {
+  const hoy = toIsoDate(new Date());
+
+  if (intent.query_type === 'balance') {
+    let cuentas = await firefly.balances();
+    if (intent.source_name) {
+      cuentas = cuentas.filter((c) => c.nombre.toLowerCase().includes(intent.source_name.toLowerCase()));
+    }
+    if (cuentas.length === 0) return '📉 No encontré información para esa cuenta.';
+    return chat.renderBalances(cuentas);
+  }
+
+  if (intent.query_type === 'budget') {
+    const ahora = new Date();
+    const inicioMes = toIsoDate(new Date(ahora.getFullYear(), ahora.getMonth(), 1));
+    const finMes = toIsoDate(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0));
+
+    const presupuestos = await firefly.budgets({ start: inicioMes, end: finMes });
+    if (presupuestos.length === 0) return '📊 No tenés presupuestos activos configurados.';
+    return chat.renderBudgets(presupuestos);
+  }
+
+  if (intent.query_type === 'recent_transactions') {
+    const transacciones = await firefly.recentTransactions({ end: hoy });
+    if (transacciones.length === 0) return '📑 No hay transacciones registradas hasta la fecha.';
+    return chat.renderRecent(transacciones.slice(0, 5));
+  }
+
+  return '❓ No pude interpretar qué consulta querés realizar.';
+}
+
+async function submitIntent(intent) {
+  await firefly.createTransaction(intent);
+  const montos = splitAmountIntoInstallments(intent.amount, intent.installments || 1);
+  return chat.renderTransactionResult(intent, montos);
+}
+
+// Misma tarjeta para ofrecer la confirmación inicial y para ofrecer un
+// reintento (R4): arma el HTML a partir de pendingIntent y la cablea a los
+// mismos confirmPendingIntent/cancelPendingIntent de siempre, así las dos
+// situaciones no pueden divergir en cómo se resuelven.
+//
+// Finding 1: intentShown queda capturado acá, en el cierre de los callbacks,
+// en vez de que confirmPendingIntent/cancelPendingIntent relean pendingIntent
+// recién al momento del click. Así el vínculo entre esta tarjeta puntual y la
+// intención que muestra es una propiedad del código (la variable capturada),
+// no del DOM: si pendingIntent cambió para cuando el usuario clickea, el
+// guard de domain/pendingIntentGuard.js lo rechaza en vez de escribir la
+// intención nueva contra los datos de la tarjeta vieja.
+function offerPendingIntentCard() {
+  const intentShown = pendingIntent;
+  const montos = intentShown.type === 'query' ? [] : splitAmountIntoInstallments(intentShown.amount, intentShown.installments || 1);
+  const html = chat.renderConfirmationCard(intentShown, montos);
+
+  chat.addConfirmationCard(html, {
+    onConfirm: () => runProtected(() => confirmPendingIntent(intentShown)),
+    onCancel: () => runProtected(() => cancelPendingIntent(intentShown))
+  });
+}
+
+function showError(err) {
+  addMessage(`❌ Error: ${err.message}`, 'bot error');
+}
+
+// Un único camino para "confirmar" y otro para "cancelar", sin importar si
+// llegaron por texto ("sí"/"no") o por los botones de la tarjeta: así no
+// pueden divergir con el tiempo y terminar haciendo cosas distintas frente
+// al mismo pedido del usuario.
+async function confirmPendingIntent(intentShown) {
+  // Finding 1: intentShown es la intención con la que se armó la tarjeta que
+  // el usuario tiene enfrente (o, en el camino sin tarjeta, la intención que
+  // se acaba de asignar a pendingIntent). Si pendingIntent ya cambió —cambió
+  // de intención, o se volvió null porque un envío más nuevo ya se
+  // auto-confirmó— esta tarjeta quedó desactualizada: se rechaza en vez de
+  // registrar la intención actual contra los datos que el usuario confirmó.
+  if (!canConfirmPendingIntent(intentShown, pendingIntent)) {
+    addMessage('⚠️ Esa tarjeta ya no está vigente: la intención cambió antes de confirmarla. Repetí la operación si todavía querés registrarla.', 'bot');
+    return;
+  }
+
+  // Finding 2: si ya hay un envío de pendingIntent en vuelo, este es un
+  // segundo disparo sobre la misma intención (p. ej. Enter con "ok" mientras
+  // el primero todavía no resolvió) y no un envío nuevo: no hace nada visible,
+  // deja que termine el que ya está en curso.
+  if (!submitGuard.tryStart()) return;
+
+  addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
+  try {
+    const resultado = await submitIntent(pendingIntent);
+    pendingIntent = null;
+    addMessage(resultado, 'bot', true);
+  } catch (err) {
+    // R4: pendingIntent no se limpia acá porque el await de arriba falló
+    // antes de esa línea, así que la intención ya validada sobrevive al
+    // error. Se reutiliza la misma tarjeta de confirmación para ofrecer un
+    // reintento que no vuelve a pasarle la frase al modelo.
+    //
+    // Finding 3: el fallo puede haber sido solo de la respuesta, no del
+    // registro en sí (Firefly no tiene idempotency key), así que reintentar
+    // a ciegas puede duplicar la transacción. Un aviso honesto es lo único
+    // que se puede hacer en esta capa.
+    showError(err);
+    addMessage('⚠️ Si el envío anterior llegó a procesarse en Firefly III, reintentar lo va a duplicar. Revisá tus últimas transacciones antes de confirmar de nuevo.', 'bot');
+    offerPendingIntentCard();
+  } finally {
+    submitGuard.finish();
+  }
+}
+
+function cancelPendingIntent(intentShown) {
+  // Mismo guard que confirmPendingIntent (Finding 1): cancelar desde una
+  // tarjeta vieja no puede borrar silenciosamente una intención más nueva que
+  // ya reemplazó a la que esa tarjeta muestra.
+  if (!canConfirmPendingIntent(intentShown, pendingIntent)) {
+    addMessage('⚠️ Esa tarjeta ya no está vigente: la intención cambió.', 'bot');
+    return;
+  }
+
+  pendingIntent = null;
+  addMessage('🚫 Operación cancelada. Podés indicarme la corrección.', 'bot');
+}
+
+// Mismo manejo de errores para el envío por texto y para los clicks de la
+// tarjeta: sendMessage ya no es el único lugar que atrapa un fallo de red.
+// confirmPendingIntent ya maneja su propio error (y ofrece el reintento de
+// R4), así que este catch cubre todo lo demás: interpretar con el modelo,
+// validar, o resolver una consulta.
+// Finding 4: runProtected no es reentrante por sí sola. Una tarjeta de
+// confirmación vieja (Finding 1, ahora rechazada por el guard, pero sus
+// botones siguen activos hasta que se clickean) puede disparar un segundo
+// runProtected mientras sendMessage todavía está esperando la respuesta del
+// modelo: sin este contador, el finally del segundo activa
+// sendBtn.disabled = false mientras el primero sigue en vuelo, reabriendo en
+// silencio el guard de Enter (línea ~280) con submitGuard como única defensa
+// restante. Un contador de profundidad deja el botón deshabilitado mientras
+// haya cualquier cantidad de llamados en curso, y solo lo reactiva cuando el
+// último termina. Se prefirió el contador a derivar el estado de
+// submitGuard.busy porque submitGuard solo cubre el envío a Firefly
+// (confirmPendingIntent); runProtected también envuelve la interpretación
+// con el modelo y handleQuery, que no pasan por ese guard.
+let runProtectedDepth = 0;
+
+async function runProtected(accion) {
+  runProtectedDepth += 1;
+  sendBtn.disabled = true;
+  try {
+    await accion();
+  } catch (err) {
+    showError(err);
+  } finally {
+    runProtectedDepth -= 1;
+    if (runProtectedDepth === 0) sendBtn.disabled = false;
+  }
+}
+
+async function processUserMessage(texto) {
+  const accion = nextAction(pendingIntent, texto);
+
+  if (accion === 'confirm') {
+    // nextAction solo devuelve 'confirm' cuando ya hay un pendingIntent
+    // (ver domain/confirmation.js), así que acá siempre es la intención
+    // vigente, no una tarjeta vieja.
+    await confirmPendingIntent(pendingIntent);
+    return;
+  }
+
+  if (accion === 'cancel') {
+    cancelPendingIntent(pendingIntent);
+    return;
+  }
+
+  const systemPrompt = buildSystemPrompt({
+    today: toIsoDate(new Date()),
+    assetAccounts: reference.assetAccounts,
+    revenueAccounts: reference.revenueAccounts,
+    categories: reference.categories,
+    tags: reference.tags,
+    defaultAssetAccount
+  });
+
+  const raw = await groq.interpret({
+    messages: buildMessages({ systemPrompt, history: chat.history(4), userText: texto })
+  });
+
+  // El modelo garantiza JSON bien formado, no que describa algo real: una
+  // cuenta inventada o una fecha imposible se frenan acá, antes de tocar
+  // Firefly, en vez de volver como un 422 que el usuario no puede interpretar.
+  const validado = validateIntent(raw, {
+    assetAccounts: reference.assetAccounts,
+    revenueAccounts: reference.revenueAccounts,
+    categories: reference.categories,
+    today: toIsoDate(new Date())
+  });
+
+  if (!validado.ok) {
+    addMessage(validado.reason, 'bot error');
+    return;
+  }
+
+  const intent = validado.intent;
+
+  // Finding 3: la ruta se decide con resolveIntentRoute, que chequea
+  // type === 'query' antes que requiere_confirmacion. Antes, si el modelo
+  // ponía las dos cosas, esta función revisaba requiere_confirmacion primero
+  // y una consulta terminaba en la tarjeta de confirmación: confirmarla
+  // llamaba a submitIntent → createTransaction en vez de a handleQuery, y
+  // como validateIntent no le exige amount a una query, el POST viajaba con
+  // amount undefined ("NaN") y Firefly lo rechazaba con un 422 en vez de
+  // simplemente responder la consulta.
+  const ruta = resolveIntentRoute(intent);
+
+  if (ruta === 'query') {
+    addMessage(await handleQuery(intent), 'bot', true);
+    return;
+  }
+
+  if (ruta === 'confirm') {
+    pendingIntent = intent;
+
+    // Tarjeta estructurada (Task 2): el usuario confirma contra los campos
+    // reales que se van a enviar, no contra la frase que escribió el modelo
+    // sobre sí mismo (mensaje_confirmacion ya no se usa acá).
+    offerPendingIntentCard();
+    return;
+  }
+
+  // Sin confirmación previa no hay tarjeta, pero el envío pasa igual por
+  // pendingIntent + confirmPendingIntent (R4): si Firefly falla acá, la
+  // intención ya validada tampoco se pierde.
+  pendingIntent = intent;
+  await confirmPendingIntent(intent);
+}
+
+async function sendMessage() {
+  const texto = inputMessage.value.trim();
+  if (!texto) return;
+
+  addMessage(texto, 'user');
+  inputMessage.value = '';
+
+  await runProtected(() => processUserMessage(texto));
+}
+
+sendBtn.addEventListener('click', sendMessage);
+inputMessage.addEventListener('keypress', (e) => {
+  // Finding 2: sendBtn.disabled ya refleja "hay algo en curso" (runProtected
+  // lo pone true de forma sincrónica antes de cualquier await); sin este
+  // chequeo, Enter durante un envío en vuelo dispara un sendMessage nuevo
+  // aunque el botón esté deshabilitado.
+  if (e.key === 'Enter' && !sendBtn.disabled) sendMessage();
+});
+
+// Task 6: restaura la transcripción guardada antes de sincronizar con
+// Firefly, reemplazando el saludo estático de index.html si había algo
+// guardado. Se usa chat.addMessage (no el wrapper de más arriba) para no
+// volver a grabar en el storage lo que ya estaba ahí.
+function restoreChatHistory() {
+  const entradas = chatHistory.read();
+  if (entradas.length === 0) return;
+
+  chat.clear();
+  for (const { texto, tipo, esHtml } of entradas) {
+    chat.addMessage(texto, tipo, esHtml);
+  }
+}
+
+clearHistoryBtn.addEventListener('click', () => {
+  chatHistory.clear();
+  chat.clear();
+});
+
+restoreChatHistory();
+loadReferenceData();
+
+// Instala el service worker que precachea el app shell (Task 5). Registrado
+// como módulo ES para que sw.js pueda importar shouldCache/APP_SHELL desde
+// domain/cacheRules.js en vez de duplicar ahí adentro la regla de /api/.
+// Guardado por feature-detection: en un navegador viejo sin soporte
+// simplemente no hay worker, y la página sigue funcionando igual sin él. Un
+// registro fallido (red, scope, etc.) tampoco debe romper la carga.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { type: 'module' }).catch((err) => {
+    console.error('No se pudo registrar el service worker:', err);
+  });
+}
