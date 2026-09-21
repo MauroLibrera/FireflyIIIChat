@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateIntent } from '../../public/js/domain/intent.js';
+import { validateIntent, resolveIntentRoute } from '../../public/js/domain/intent.js';
 
 const CONTEXT = {
   assetAccounts: ['Galicia'],
@@ -318,4 +318,27 @@ test('an undefined raw value is rejected without throwing', () => {
     const result = validateIntent(undefined, CONTEXT);
     assert.equal(result.ok, false);
   });
+});
+
+// Finding 3: una query nunca puede llegar al camino de escritura (tarjeta de
+// confirmación o envío directo), sin importar qué haya pedido el modelo en
+// requiere_confirmacion. Antes del fix, app.js chequeaba
+// requiere_confirmacion antes que type === 'query', así que un modelo que
+// pusiera ambos hacía que confirmar la tarjeta llamara a submitIntent en vez
+// de handleQuery.
+
+test('a query always routes to query, even when the model also asked for confirmation', () => {
+  assert.equal(resolveIntentRoute({ type: 'query', requiere_confirmacion: true }), 'query');
+});
+
+test('a query routes to query when the model did not ask for confirmation either', () => {
+  assert.equal(resolveIntentRoute({ type: 'query', requiere_confirmacion: false }), 'query');
+});
+
+test('a non-query intent that requires confirmation routes to confirm', () => {
+  assert.equal(resolveIntentRoute({ type: 'withdrawal', requiere_confirmacion: true }), 'confirm');
+});
+
+test('a non-query intent that does not require confirmation routes to submit', () => {
+  assert.equal(resolveIntentRoute({ type: 'withdrawal', requiere_confirmacion: false }), 'submit');
 });

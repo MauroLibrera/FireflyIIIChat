@@ -174,8 +174,12 @@ test('renderConfirmationCard shows the installment count and the per-installment
     ['3333.34', '3333.33', '3333.33']
   );
 
-  assert.match(html, /3/);
-  assert.match(html, /3\.333,34/);
+  // Finding 5, fix round 2: /3/ como regex nunca podía fallar (matchea "2026",
+  // "3.333", clases CSS, etc.), así que no probaba nada. Se ata la cantidad
+  // de cuotas y el monto por cuota a la misma fila, tal como los arma
+  // filaConfirmacion, para que el assert sí falle si cualquiera de los dos
+  // deja de mostrarse.
+  assert.match(html, /Cuotas:<\/span> 3 de \$3\.333,34 c\/u/);
 });
 
 // Fix round 1, finding 2: la tarjeta mezclaba dos formatos de moneda en el
@@ -305,8 +309,15 @@ test('renderConfirmationCard labels a deposit and a withdrawal in Spanish, not t
     ['100.00']
   );
 
-  assert.doesNotMatch(withdrawal, />withdrawal</);
-  assert.doesNotMatch(deposit, />deposit</);
+  // Finding 5, fix round 2: filaConfirmacion emite "</span> withdrawal</div>",
+  // con un espacio antes del valor, así que />withdrawal</ nunca podía
+  // matchear ni aunque se mostrara el string en inglés sin traducir. Se
+  // afirma directamente que la etiqueta en español está presente y que el
+  // tipo crudo en inglés no aparece en ningún lado del HTML.
+  assert.match(withdrawal, /Gasto/);
+  assert.doesNotMatch(withdrawal, /withdrawal/);
+  assert.match(deposit, /Ingreso/);
+  assert.doesNotMatch(deposit, /deposit/);
 });
 
 test('renderConfirmationCard includes distinguishable confirm and cancel controls for ui/chat.js to wire up', () => {

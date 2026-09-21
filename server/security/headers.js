@@ -3,10 +3,9 @@
 // pruebas puedan afirmar sobre la política sin depender del formato exacto
 // del string del header.
 //
-// - default/script/style/connect/manifest: solo 'self'. El HTML ya no tiene
-//   estilos ni handlers inline (tareas anteriores los quitaron), así que no
-//   hace falta 'unsafe-inline' en ningún lado.
-// - img-src suma 'data:' porque la UI usa URIs de datos para íconos/generados.
+// - default/script/style/connect/manifest/img: solo 'self'. El HTML ya no
+//   tiene estilos ni handlers inline (tareas anteriores los quitaron), así
+//   que no hace falta 'unsafe-inline' en ningún lado.
 // - worker-src 'self' es necesario para que el service worker (registrado con
 //   { type: 'module' } e importando /js/domain/cacheRules.js) pueda cargar.
 // - manifest-src 'self' porque index.html enlaza /manifest.json.
@@ -18,7 +17,7 @@ export const CSP_DIRECTIVES = {
   'style-src': ["'self'"],
   'connect-src': ["'self'"],
   'manifest-src': ["'self'"],
-  'img-src': ["'self'", 'data:'],
+  'img-src': ["'self'"],
   'worker-src': ["'self'"],
   'frame-ancestors': ["'none'"],
   'base-uri': ["'none'"],

@@ -8,7 +8,7 @@ import { shouldCache, APP_SHELL } from './js/domain/cacheRules.js';
 // APP_SHELL). El activate de abajo borra toda caché cuyo nombre no coincida
 // con la versión actual, así un shell viejo no queda pegado en el
 // dispositivo de alguien que ya lo tenía instalado.
-const CACHE_VERSION = 'firefly-shell-v1';
+const CACHE_VERSION = 'firefly-shell-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

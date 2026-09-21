@@ -1,7 +1,8 @@
 import { toIsoDate } from './domain/format.js';
 import { activeProfile, authHeaders } from './domain/profiles.js';
 import { nextAction } from './domain/confirmation.js';
-import { validateIntent } from './domain/intent.js';
+import { validateIntent, resolveIntentRoute } from './domain/intent.js';
+import { canConfirmPendingIntent } from './domain/pendingIntentGuard.js';
 import { buildSystemPrompt, buildMessages } from './domain/prompt.js';
 import { splitAmountIntoInstallments } from './domain/installments.js';
 import { createSubmitGuard } from './domain/submitGuard.js';
@@ -118,13 +119,22 @@ async function submitIntent(intent) {
 // reintento (R4): arma el HTML a partir de pendingIntent y la cablea a los
 // mismos confirmPendingIntent/cancelPendingIntent de siempre, así las dos
 // situaciones no pueden divergir en cómo se resuelven.
+//
+// Finding 1: intentShown queda capturado acá, en el cierre de los callbacks,
+// en vez de que confirmPendingIntent/cancelPendingIntent relean pendingIntent
+// recién al momento del click. Así el vínculo entre esta tarjeta puntual y la
+// intención que muestra es una propiedad del código (la variable capturada),
+// no del DOM: si pendingIntent cambió para cuando el usuario clickea, el
+// guard de domain/pendingIntentGuard.js lo rechaza en vez de escribir la
+// intención nueva contra los datos de la tarjeta vieja.
 function offerPendingIntentCard() {
-  const montos = pendingIntent.type === 'query' ? [] : splitAmountIntoInstallments(pendingIntent.amount, pendingIntent.installments || 1);
-  const html = chat.renderConfirmationCard(pendingIntent, montos);
+  const intentShown = pendingIntent;
+  const montos = intentShown.type === 'query' ? [] : splitAmountIntoInstallments(intentShown.amount, intentShown.installments || 1);
+  const html = chat.renderConfirmationCard(intentShown, montos);
 
   chat.addConfirmationCard(html, {
-    onConfirm: () => runProtected(confirmPendingIntent),
-    onCancel: () => runProtected(cancelPendingIntent)
+    onConfirm: () => runProtected(() => confirmPendingIntent(intentShown)),
+    onCancel: () => runProtected(() => cancelPendingIntent(intentShown))
   });
 }
 
@@ -136,7 +146,18 @@ function showError(err) {
 // llegaron por texto ("sí"/"no") o por los botones de la tarjeta: así no
 // pueden divergir con el tiempo y terminar haciendo cosas distintas frente
 // al mismo pedido del usuario.
-async function confirmPendingIntent() {
+async function confirmPendingIntent(intentShown) {
+  // Finding 1: intentShown es la intención con la que se armó la tarjeta que
+  // el usuario tiene enfrente (o, en el camino sin tarjeta, la intención que
+  // se acaba de asignar a pendingIntent). Si pendingIntent ya cambió —cambió
+  // de intención, o se volvió null porque un envío más nuevo ya se
+  // auto-confirmó— esta tarjeta quedó desactualizada: se rechaza en vez de
+  // registrar la intención actual contra los datos que el usuario confirmó.
+  if (!canConfirmPendingIntent(intentShown, pendingIntent)) {
+    addMessage('⚠️ Esa tarjeta ya no está vigente: la intención cambió antes de confirmarla. Repetí la operación si todavía querés registrarla.', 'bot');
+    return;
+  }
+
   // Finding 2: si ya hay un envío de pendingIntent en vuelo, este es un
   // segundo disparo sobre la misma intención (p. ej. Enter con "ok" mientras
   // el primero todavía no resolvió) y no un envío nuevo: no hace nada visible,
@@ -166,7 +187,15 @@ async function confirmPendingIntent() {
   }
 }
 
-function cancelPendingIntent() {
+function cancelPendingIntent(intentShown) {
+  // Mismo guard que confirmPendingIntent (Finding 1): cancelar desde una
+  // tarjeta vieja no puede borrar silenciosamente una intención más nueva que
+  // ya reemplazó a la que esa tarjeta muestra.
+  if (!canConfirmPendingIntent(intentShown, pendingIntent)) {
+    addMessage('⚠️ Esa tarjeta ya no está vigente: la intención cambió.', 'bot');
+    return;
+  }
+
   pendingIntent = null;
   addMessage('🚫 Operación cancelada. Podés indicarme la corrección.', 'bot');
 }
@@ -176,14 +205,31 @@ function cancelPendingIntent() {
 // confirmPendingIntent ya maneja su propio error (y ofrece el reintento de
 // R4), así que este catch cubre todo lo demás: interpretar con el modelo,
 // validar, o resolver una consulta.
+// Finding 4: runProtected no es reentrante por sí sola. Una tarjeta de
+// confirmación vieja (Finding 1, ahora rechazada por el guard, pero sus
+// botones siguen activos hasta que se clickean) puede disparar un segundo
+// runProtected mientras sendMessage todavía está esperando la respuesta del
+// modelo: sin este contador, el finally del segundo activa
+// sendBtn.disabled = false mientras el primero sigue en vuelo, reabriendo en
+// silencio el guard de Enter (línea ~280) con submitGuard como única defensa
+// restante. Un contador de profundidad deja el botón deshabilitado mientras
+// haya cualquier cantidad de llamados en curso, y solo lo reactiva cuando el
+// último termina. Se prefirió el contador a derivar el estado de
+// submitGuard.busy porque submitGuard solo cubre el envío a Firefly
+// (confirmPendingIntent); runProtected también envuelve la interpretación
+// con el modelo y handleQuery, que no pasan por ese guard.
+let runProtectedDepth = 0;
+
 async function runProtected(accion) {
+  runProtectedDepth += 1;
   sendBtn.disabled = true;
   try {
     await accion();
   } catch (err) {
     showError(err);
   } finally {
-    sendBtn.disabled = false;
+    runProtectedDepth -= 1;
+    if (runProtectedDepth === 0) sendBtn.disabled = false;
   }
 }
 
@@ -191,12 +237,15 @@ async function processUserMessage(texto) {
   const accion = nextAction(pendingIntent, texto);
 
   if (accion === 'confirm') {
-    await confirmPendingIntent();
+    // nextAction solo devuelve 'confirm' cuando ya hay un pendingIntent
+    // (ver domain/confirmation.js), así que acá siempre es la intención
+    // vigente, no una tarjeta vieja.
+    await confirmPendingIntent(pendingIntent);
     return;
   }
 
   if (accion === 'cancel') {
-    cancelPendingIntent();
+    cancelPendingIntent(pendingIntent);
     return;
   }
 
@@ -230,7 +279,22 @@ async function processUserMessage(texto) {
 
   const intent = validado.intent;
 
-  if (intent.requiere_confirmacion) {
+  // Finding 3: la ruta se decide con resolveIntentRoute, que chequea
+  // type === 'query' antes que requiere_confirmacion. Antes, si el modelo
+  // ponía las dos cosas, esta función revisaba requiere_confirmacion primero
+  // y una consulta terminaba en la tarjeta de confirmación: confirmarla
+  // llamaba a submitIntent → createTransaction en vez de a handleQuery, y
+  // como validateIntent no le exige amount a una query, el POST viajaba con
+  // amount undefined ("NaN") y Firefly lo rechazaba con un 422 en vez de
+  // simplemente responder la consulta.
+  const ruta = resolveIntentRoute(intent);
+
+  if (ruta === 'query') {
+    addMessage(await handleQuery(intent), 'bot', true);
+    return;
+  }
+
+  if (ruta === 'confirm') {
     pendingIntent = intent;
 
     // Tarjeta estructurada (Task 2): el usuario confirma contra los campos
@@ -240,16 +304,11 @@ async function processUserMessage(texto) {
     return;
   }
 
-  if (intent.type === 'query') {
-    addMessage(await handleQuery(intent), 'bot', true);
-    return;
-  }
-
   // Sin confirmación previa no hay tarjeta, pero el envío pasa igual por
   // pendingIntent + confirmPendingIntent (R4): si Firefly falla acá, la
   // intención ya validada tampoco se pierde.
   pendingIntent = intent;
-  await confirmPendingIntent();
+  await confirmPendingIntent(intent);
 }
 
 async function sendMessage() {

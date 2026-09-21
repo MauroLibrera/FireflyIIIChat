@@ -128,3 +128,18 @@ export function validateIntent(raw, context) {
 
   return { ok: true, intent };
 }
+
+// Decide a qué rama de app.js tiene que ir una intención ya validada por
+// validateIntent. El chequeo de "query" va primero y es incondicional: una
+// consulta nunca puede llegar al camino de escritura (tarjeta de
+// confirmación o envío directo), sin importar qué haya pedido el modelo en
+// requiere_confirmacion. validateIntent no le exige "amount" a una query
+// (queda undefined), así que dejarla pasar por esa rama termina en un 422 de
+// Firefly ("NaN" como monto) en vez de fallar acá, donde se puede explicar.
+//
+// Puro: solo mira el objeto intent, sin DOM ni fetch.
+export function resolveIntentRoute(intent) {
+  if (intent.type === 'query') return 'query';
+  if (intent.requiere_confirmacion) return 'confirm';
+  return 'submit';
+}

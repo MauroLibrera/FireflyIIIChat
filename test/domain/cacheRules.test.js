@@ -1,6 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { shouldCache, APP_SHELL } from '../../public/js/domain/cacheRules.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const JS_DIR = path.join(__dirname, '../../public/js');
+
+// Camina public/js/ recursivamente y devuelve cada módulo como la ruta que
+// APP_SHELL usa ('/js/domain/foo.js'), no una ruta de filesystem.
+function listJsModulesOnDisk(dir, baseDir) {
+  const entradas = fs.readdirSync(dir, { withFileTypes: true });
+  let archivos = [];
+  for (const entrada of entradas) {
+    const rutaCompleta = path.join(dir, entrada.name);
+    if (entrada.isDirectory()) {
+      archivos = archivos.concat(listJsModulesOnDisk(rutaCompleta, baseDir));
+    } else if (entrada.name.endsWith('.js')) {
+      const relativa = path.relative(baseDir, rutaCompleta).split(path.sep).join('/');
+      archivos.push(`/js/${relativa}`);
+    }
+  }
+  return archivos;
+}
 
 // La regla que no puede romperse: nada bajo /api/ es cacheable. Un saldo o
 // una lista de transacciones servidos desde la caché es un número
@@ -98,4 +121,19 @@ test('every path listed in APP_SHELL is itself cacheable under shouldCache', () 
 
 test('APP_SHELL contains no path under /api/', () => {
   assert.ok(APP_SHELL.every((path) => !path.startsWith('/api/')));
+});
+
+// Finding 2: la prueba de arriba ("includes the app entry module") solo
+// afirma sobre /js/app.js, así que no detecta la omisión de cualquier otro
+// módulo (como pasó con services/chatHistory.js). Esta lee public/js/ del
+// disco y exige que TODOS los módulos estén listados, así una omisión
+// futura sí hace fallar la suite en vez de quedar en silencio hasta que
+// alguien lo note offline.
+test('every .js module found under public/js on disk is listed in APP_SHELL', () => {
+  const modulosEnDisco = listJsModulesOnDisk(JS_DIR, JS_DIR);
+  assert.ok(modulosEnDisco.length > 0, 'se esperaba encontrar al menos un módulo en disco');
+
+  for (const modulo of modulosEnDisco) {
+    assert.ok(APP_SHELL.includes(modulo), `se esperaba que APP_SHELL incluyera ${modulo}`);
+  }
 });

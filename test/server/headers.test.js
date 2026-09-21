@@ -81,8 +81,12 @@ test('CSP_DIRECTIVES confines default, script, style, connect and manifest sourc
   assert.deepEqual(CSP_DIRECTIVES['manifest-src'], ["'self'"]);
 });
 
-test('CSP_DIRECTIVES allows images from self and data: URIs', () => {
-  assert.deepEqual(CSP_DIRECTIVES['img-src'], ["'self'", 'data:']);
+// Finding 6: nada bajo public/ genera una data: URI; la UI no tiene ningún
+// <img src="data:..."> ni lo construye en JS. 'data:' quedaba en la
+// directiva sin motivo real, así que se saca en vez de mantener una excepción
+// que nada usa.
+test('CSP_DIRECTIVES allows images only from self, with no data: exception', () => {
+  assert.deepEqual(CSP_DIRECTIVES['img-src'], ["'self'"]);
 });
 
 test('CSP_DIRECTIVES allows the service worker via worker-src self', () => {
