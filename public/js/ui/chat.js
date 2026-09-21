@@ -1,4 +1,4 @@
-import { escapeHtml, formatCurrency } from '../domain/format.js';
+import { renderBalances, renderBudgets, renderRecent, renderTransactionResult } from '../domain/messages.js';
 
 export function createChatView({ chatElement, statusElement }) {
   // esHtml solo puede ser true para marcado que construye la app, nunca para
@@ -33,50 +33,8 @@ export function createChatView({ chatElement, statusElement }) {
       }));
   }
 
-  function renderBalances(cuentas) {
-    let html = '<b>💳 Saldos actuales:</b><br>';
-    for (const c of cuentas) {
-      html += `• <b>${escapeHtml(c.nombre)}:</b> ${escapeHtml(c.moneda)}${formatCurrency(c.saldo)}<br>`;
-    }
-    return html;
-  }
-
-  function renderBudgets(presupuestos) {
-    let html = '<b>📊 Estado de Presupuestos:</b><br>';
-    for (const b of presupuestos) {
-      html += `• <b>${escapeHtml(b.name)}:</b> Gastado $${formatCurrency(b.spent)}<br>`;
-    }
-    return html;
-  }
-
-  function renderRecent(transacciones) {
-    let html = '<b>📜 Últimos movimientos reales:</b><br>';
-    for (const tx of transacciones) {
-      const signo = tx.type === 'withdrawal' ? '-' : '+';
-      const fecha = tx.date ? tx.date.split('T')[0] : '';
-      html += `• <i>${escapeHtml(fecha)}</i> | <b>${escapeHtml(tx.description)}</b>: ${signo}$${formatCurrency(tx.amount)} (${escapeHtml(tx.source_name)})<br>`;
-    }
-    return html;
-  }
-
-  function renderTransactionResult(intent, montos) {
-    const metaInfo = [];
-    if (intent.category_name) metaInfo.push(`📁 Categoría: <b>${escapeHtml(intent.category_name)}</b>`);
-    if (intent.tags && intent.tags.length > 0) {
-      metaInfo.push(`🏷️ Tags: ${intent.tags.map((t) => `#${escapeHtml(t)}`).join(', ')}`);
-    }
-
-    const extraHtml = metaInfo.length > 0 ? `<br><small>${metaInfo.join(' | ')}</small>` : '';
-    const numCuotas = montos.length;
-
-    if (intent.type === 'transfer') {
-      return `✅ Transferencia de <b>$${escapeHtml(intent.amount)}</b> de <i>${escapeHtml(intent.source_name)}</i> a <i>${escapeHtml(intent.destination_name)}</i>.${extraHtml}`;
-    }
-
-    return numCuotas > 1
-      ? `✅ Registradas <b>${numCuotas} cuotas</b> de $${montos[0]} en <i>${escapeHtml(intent.source_name)}</i> para "${escapeHtml(intent.description)}".${extraHtml}`
-      : `✅ Registrado gasto de <b>$${escapeHtml(intent.amount)}</b> en <i>${escapeHtml(intent.source_name)}</i> para "${escapeHtml(intent.description)}".${extraHtml}`;
-  }
-
+  // Los cuatro renderers son lógica pura y viven en domain/messages.js (con
+  // sus propios tests); se re-exponen acá para que app.js no tenga que
+  // cambiar cómo los consume.
   return { addMessage, setStatus, history, renderBalances, renderBudgets, renderRecent, renderTransactionResult };
 }
