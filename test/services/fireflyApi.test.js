@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { createFireflyApi, FIREFLY_TIMEOUT_MS } from '../../public/js/services/fireflyApi.js';
 
 function pagedFetch({ totalPages, lastPageCount = 3, seen = [] }) {
@@ -198,7 +199,11 @@ test('a custom timeoutMs reaches the signal construction', async (t) => {
   assert.equal(capturedMs, 5);
 });
 
-test('an aborted request surfaces a timeout message instead of AbortError', async () => {
+// Fix round 1: un fetchImpl fabricado con name = 'AbortError' pasaba aunque
+// el guard estuviera mal, porque nada disparaba jamás un timeout real. Esto
+// cubre igual el caso de un abort manual (AbortController().abort()), que sí
+// rechaza con ese nombre y que el guard también tiene que seguir traduciendo.
+test('a manually aborted request surfaces a timeout message instead of AbortError', async () => {
   const abortError = new Error('The operation was aborted');
   abortError.name = 'AbortError';
 
@@ -212,6 +217,37 @@ test('an aborted request surfaces a timeout message instead of AbortError', asyn
     assert.doesNotMatch(err.message, /AbortError/);
     return true;
   });
+});
+
+// El caso real: AbortSignal.timeout() rechaza con name 'TimeoutError', no
+// 'AbortError' (verificado contra un servidor colgado de verdad antes de
+// escribir este test). fetchImpl acá es el fetch real -- respeta la señal
+// de verdad -- apuntado a un servidor que nunca contesta, con un timeoutMs
+// de milisegundos en vez de los 15000 reales: discrimina el bug (un guard
+// que solo mira 'AbortError' lo deja pasar como DOMException crudo) sin
+// esperar más que unos milisegundos.
+test('a genuinely stalled request times out and surfaces a readable message', async () => {
+  const server = http.createServer(() => {}); // nunca responde
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+
+  const api = createFireflyApi({
+    fetchImpl: (path, opts) => fetch(`http://127.0.0.1:${port}${path}`, opts),
+    getHeaders: () => ({}),
+    timeoutMs: 30
+  });
+
+  try {
+    await assert.rejects(() => api.balances(), (err) => {
+      assert.equal(err.constructor.name, 'Error');
+      assert.match(err.message, /tiempo de espera/);
+      assert.doesNotMatch(err.message, /AbortError/);
+      assert.doesNotMatch(err.message, /TimeoutError/);
+      return true;
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('a normal successful call still succeeds with the timeout signal attached', async () => {

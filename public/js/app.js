@@ -4,6 +4,7 @@ import { nextAction } from './domain/confirmation.js';
 import { validateIntent } from './domain/intent.js';
 import { buildSystemPrompt, buildMessages } from './domain/prompt.js';
 import { splitAmountIntoInstallments } from './domain/installments.js';
+import { createSubmitGuard } from './domain/submitGuard.js';
 import { createProfileStore } from './services/profileStore.js';
 import { createFireflyApi } from './services/fireflyApi.js';
 import { createGroqApi } from './services/groqApi.js';
@@ -27,6 +28,15 @@ const sendBtn = document.getElementById('sendBtn');
 let reference = { assetAccounts: [], revenueAccounts: [], tags: [], categories: [] };
 let defaultAssetAccount = '';
 let pendingIntent = null;
+
+// Fix round 1 (Finding 2): el reintento de R4 dejó pendingIntent puesto
+// mientras el POST a Firefly sigue en vuelo, y domain/confirmation.js trata
+// "ok"/"dale"/"ya" como afirmativas. Sin este guard, escribir eso y apretar
+// Enter durante ese envío dispara un segundo confirmPendingIntent() para la
+// misma intención. sendBtn.disabled ya frena la UI, pero este guard es la
+// defensa que no depende de que ningún otro punto de entrada futuro respete
+// ese disabled.
+const submitGuard = createSubmitGuard();
 
 const modal = createConfigModal({ store, onSaved: loadReferenceData });
 
@@ -114,6 +124,12 @@ function showError(err) {
 // pueden divergir con el tiempo y terminar haciendo cosas distintas frente
 // al mismo pedido del usuario.
 async function confirmPendingIntent() {
+  // Finding 2: si ya hay un envío de pendingIntent en vuelo, este es un
+  // segundo disparo sobre la misma intención (p. ej. Enter con "ok" mientras
+  // el primero todavía no resolvió) y no un envío nuevo: no hace nada visible,
+  // deja que termine el que ya está en curso.
+  if (!submitGuard.tryStart()) return;
+
   chat.addMessage('⏳ Registrando transacción en Firefly III...', 'bot');
   try {
     const resultado = await submitIntent(pendingIntent);
@@ -124,9 +140,16 @@ async function confirmPendingIntent() {
     // antes de esa línea, así que la intención ya validada sobrevive al
     // error. Se reutiliza la misma tarjeta de confirmación para ofrecer un
     // reintento que no vuelve a pasarle la frase al modelo.
+    //
+    // Finding 3: el fallo puede haber sido solo de la respuesta, no del
+    // registro en sí (Firefly no tiene idempotency key), así que reintentar
+    // a ciegas puede duplicar la transacción. Un aviso honesto es lo único
+    // que se puede hacer en esta capa.
     showError(err);
-    chat.addMessage('🔁 Podés reintentar el envío sin volver a escribir el pedido.', 'bot');
+    chat.addMessage('⚠️ Si el envío anterior llegó a procesarse en Firefly III, reintentar lo va a duplicar. Revisá tus últimas transacciones antes de confirmar de nuevo.', 'bot');
     offerPendingIntentCard();
+  } finally {
+    submitGuard.finish();
   }
 }
 
@@ -228,7 +251,11 @@ async function sendMessage() {
 
 sendBtn.addEventListener('click', sendMessage);
 inputMessage.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') sendMessage();
+  // Finding 2: sendBtn.disabled ya refleja "hay algo en curso" (runProtected
+  // lo pone true de forma sincrónica antes de cualquier await); sin este
+  // chequeo, Enter durante un envío en vuelo dispara un sendMessage nuevo
+  // aunque el botón esté deshabilitado.
+  if (e.key === 'Enter' && !sendBtn.disabled) sendMessage();
 });
 
 loadReferenceData();

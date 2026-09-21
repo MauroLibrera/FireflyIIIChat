@@ -22,9 +22,11 @@ export function createGroqApi({ fetchImpl = fetch, getHeaders, model = DEFAULT_M
         })
       });
     } catch (err) {
-      // Ver el comentario equivalente en fireflyApi.js: un abort por timeout
-      // no puede llegarle al usuario como "AbortError".
-      if (err.name === 'AbortError') {
+      // Ver el comentario equivalente en fireflyApi.js: AbortSignal.timeout()
+      // rechaza con name "TimeoutError", no "AbortError" (ese es el nombre de
+      // un AbortController.abort() manual). Ninguno de los dos puede
+      // llegarle al usuario tal cual.
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
         throw new Error('La solicitud a Groq superó el tiempo de espera.');
       }
       throw err;

@@ -14,9 +14,11 @@ export function createFireflyApi({ fetchImpl = fetch, getHeaders, maxPages = DEF
     try {
       return await fetchImpl(path, { ...options, headers: getHeaders(), signal: AbortSignal.timeout(timeoutMs) });
     } catch (err) {
-      // Un abort por timeout no puede llegarle al usuario como "AbortError":
-      // esa palabra no le dice qué pasó. Cualquier otro error sigue de largo.
-      if (err.name === 'AbortError') {
+      // AbortSignal.timeout() rechaza con name "TimeoutError" (DOMException),
+      // no "AbortError": ese nombre es el de un AbortController.abort() manual.
+      // Un abort por timeout no puede llegarle al usuario como esa palabra
+      // técnica de ningún tipo; cualquier otro error sigue de largo.
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
         throw new Error('La solicitud a Firefly III superó el tiempo de espera.');
       }
       throw err;
